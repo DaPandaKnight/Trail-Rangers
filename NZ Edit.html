@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>NZ Terrain Explorer</title>
+
+  <!-- MapLibre GL JS -->
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0d0f0e;
+      --panel:    #141817;
+      --border:   #2a2f2c;
+      --accent:   #ff8400;
+      --accent2:  #00c9ff;
+      --text:     #e8ede9;
+      --muted:    #6b7a6e;
+      --radius:   10px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow: hidden; }
+
+    /* ── Header ── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 20;
+      height: 52px;
+      background: rgba(13,15,14,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; padding: 0 20px; gap: 16px;
+    }
+    header h1 { font-family: 'Syne', sans-serif; font-size: 1.1rem; font-weight: 800; letter-spacing: -0.02em; }
+    header h1 span { color: var(--accent); }
+    .coord-display {
+      margin-left: auto; font-size: 0.7rem; color: var(--muted);
+      background: var(--panel); border: 1px solid var(--border);
+      padding: 4px 10px; border-radius: 6px; letter-spacing: 0.05em;
+      min-width: 260px; text-align: center;
+    }
+
+    /* ── Map ── */
+    #map { position: fixed; inset: 52px 0 0 0; }
+
+    /* ── Side Panel ── */
+    #panel {
+      position: fixed; top: 68px; left: 16px; z-index: 10;
+      width: 240px;
+      background: rgba(20,24,23,0.92);
+      backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex; flex-direction: column; gap: 20px;
+    }
+
+    .panel-section-label {
+      font-size: 0.6rem; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--muted); margin-bottom: 8px;
+    }
+
+    /* Layer toggles */
+    .layer-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 8px;
+    }
+    .layer-name { font-size: 0.75rem; color: var(--text); }
+
+    /* Toggle switch */
+    .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0; cursor: pointer;
+      background: var(--border); border-radius: 20px;
+      transition: background 0.2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 14px; height: 14px; left: 3px; top: 3px;
+      background: var(--muted); border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle input:checked + .toggle-slider { background: color-mix(in srgb, var(--accent) 30%, var(--border)); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(16px); background: var(--accent); }
+
+    /* Opacity slider */
+    .opacity-row { display: flex; flex-direction: column; gap: 6px; }
+    .opacity-header { display: flex; justify-content: space-between; align-items: center; }
+    .opacity-val { font-size: 0.7rem; color: var(--accent); }
+
+    input[type=range] {
+      appearance: none; -webkit-appearance: none; width: 100%; height: 4px;
+      background: var(--border); border-radius: 4px; outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 14px; height: 14px;
+      border-radius: 50%; background: var(--accent);
+      box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
+    }
+
+    /* Zoom buttons */
+    .zoom-row { display: flex; gap: 8px; }
+    .zoom-btn {
+      flex: 1; padding: 7px 0; font-family: 'DM Mono', monospace;
+      font-size: 1rem; font-weight: 500;
+      background: var(--panel); color: var(--text);
+      border: 1px solid var(--border); border-radius: 6px;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s;
+    }
+    .zoom-btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
+
+    /* Attribution */
+    .map-attr {
+      position: fixed; bottom: 4px; right: 8px; z-index: 10;
+      font-size: 0.6rem; color: var(--muted);
+    }
+    .map-attr a { color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>NZ <span>Ridge</span> Walker</h1>
+  <div class="coord-display" id="coords">Move cursor over map to show coordinates</div>
+</header>
+
+<div id="map"></div>
+
+<div id="panel">
+
+  <div>
+    <div class="panel-section-label">Base Layer</div>
+    <div class="layer-row">
+      <span class="layer-name">Aerial Imagery</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-aerial" checked />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel-section-label">Overlay</div>
+    <div class="layer-row" style="margin-bottom:12px">
+      <span class="layer-name">Topographic Map</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-topo" checked />
+        <span class="toggle-slider"></span>
+      </label>
+    </div>
+    <div class="opacity-row">
+      <div class="opacity-header">
+        <span class="panel-section-label" style="margin:0">Topo Opacity</span>
+        <span class="opacity-val" id="opacity-val">60%</span>
+      </div>
+      <input type="range" id="topo-opacity" min="0" max="100" value="60" />
+    </div>
+  </div>
+
+  <div>
+    <div class="panel-section-label">Zoom</div>
+    <div class="zoom-row">
+      <button class="zoom-btn" id="zoom-in">+</button>
+      <button class="zoom-btn" id="zoom-out">−</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  // ── CONFIG ───────────────────────────────────────────────────────────────
+  const LINZ_API_KEY = 'c01kqxnkw0j9qyfvywax1ga2wcb';
+  // ─────────────────────────────────────────────────────────────────────────
+
+  const AERIAL_URL =
+    `https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_API_KEY}`;
+
+  // Topo is a vector tile service — loaded via StyleJSON after map init
+  const TOPO_STYLE_URL =
+    `https://basemaps.linz.govt.nz/v1/tiles/topographic/WebMercatorQuad/style/topographic.json?api=${LINZ_API_KEY}`;
+
+  // Start with aerial only — topo vector layers added after map loads
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: {
+      version: 8,
+      sources: {
+        aerial: {
+          type: 'raster',
+          tiles: [AERIAL_URL],
+          tileSize: 256,
+          attribution: '© LINZ CC BY 4.0'
+        }
+      },
+      layers: [
+        { id: 'aerial-layer', type: 'raster', source: 'aerial', paint: { 'raster-opacity': 1 } }
+      ]
+    },
+    center: [172.5, -41.0],
+    zoom: 5,
+    minZoom: 4,
+    maxZoom: 19,
+  });
+
+  // ── Load topo vector style and add its sources/layers on top ─────────────
+  let topoLayerIds = [];   // track which layer IDs belong to topo
+  let topoVisible  = true;
+  let topoOpacity  = 0.6;
+
+  map.on('load', async () => {
+
+    try {
+      const resp  = await fetch(TOPO_STYLE_URL);
+      const style = await resp.json();
+
+      // Add each topo source into the map
+      for (const [id, src] of Object.entries(style.sources || {})) {
+        if (!map.getSource(id)) map.addSource(id, src);
+      }
+
+      // Add each topo layer on top of aerial, recording its id
+      for (const layer of (style.layers || [])) {
+        if (!map.getLayer(layer.id)) {
+          map.addLayer(layer);
+          topoLayerIds.push(layer.id);
+        }
+      }
+
+      // Apply initial opacity to all topo layers
+      applyTopoOpacity(topoOpacity);
+
+    } catch (err) {
+      console.error('Failed to load LINZ topo style:', err);
+    }
+
+  });
+
+  // Helper — set opacity on every topo layer based on its type
+  function applyTopoOpacity(opacity) {
+    for (const id of topoLayerIds) {
+      if (!map.getLayer(id)) continue;
+      const type = map.getLayer(id).type;
+      try {
+        if (type === 'fill')   map.setPaintProperty(id, 'fill-opacity',    opacity);
+        if (type === 'background') map.setPaintProperty(id, 'background-opacity', opacity);
+        if (type === 'line')   map.setPaintProperty(id, 'line-opacity',    opacity);
+        if (type === 'symbol') map.setPaintProperty(id, 'icon-opacity',    opacity);
+        if (type === 'symbol') map.setPaintProperty(id, 'text-opacity',    opacity);
+        if (type === 'circle') map.setPaintProperty(id, 'circle-opacity',  opacity);
+        if (type === 'raster') map.setPaintProperty(id, 'raster-opacity',  opacity);
+      } catch(_) {}
+    }
+  }
+
+  // ── Coordinate display ───────────────────────────────────────────────────
+  const coordsEl = document.getElementById('coords');
+  map.on('mousemove', e => {
+    const { lng, lat } = e.lngLat;
+    coordsEl.textContent = `${lat.toFixed(5)}° S  ${lng.toFixed(5)}° E   zoom ${map.getZoom().toFixed(1)}`;
+  });
+
+  // ── Layer toggles ────────────────────────────────────────────────────────
+  document.getElementById('toggle-aerial').addEventListener('change', e => {
+    map.setLayoutProperty('aerial-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+  });
+
+  document.getElementById('toggle-topo').addEventListener('change', e => {
+    topoVisible = e.target.checked;
+    const vis = topoVisible ? 'visible' : 'none';
+    for (const id of topoLayerIds) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
+    }
+  });
+
+  // ── Opacity slider ───────────────────────────────────────────────────────
+  const opacitySlider = document.getElementById('topo-opacity');
+  const opacityVal    = document.getElementById('opacity-val');
+  opacitySlider.addEventListener('input', () => {
+    topoOpacity = opacitySlider.value / 100;
+    applyTopoOpacity(topoOpacity);
+    opacityVal.textContent = `${opacitySlider.value}%`;
+  });
+
+
+  // ── Zoom buttons ─────────────────────────────────────────────────────────
+  document.getElementById('zoom-in').addEventListener('click',  () => map.zoomIn());
+  document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
+</script>
+</body>
+</html>
