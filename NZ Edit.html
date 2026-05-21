@@ -23,6 +23,25 @@
 <div id="panel">
 
   <div>
+    <div class="panel-section-label">Difficulty</div>
+    <div class="difficulty-group">
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="easy" checked />
+      <span>Easy</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="medium" />
+      <span>Medium</span>
+    </label>
+    <label class="difficulty-option">
+      <input type="radio" name="difficulty" value="hard" />
+      <span>Hard</span>
+    </label>
+  </div>
+
+  </div>
+
+  <div>
     <div class="panel-section-label">Base Layer</div>
     <div class="layer-row">
       <span class="layer-name">Aerial Imagery</span>
@@ -41,6 +60,15 @@
         <input type="checkbox" id="toggle-topo" checked />
         <span class="toggle-slider"></span>
       </label>
+      <br>
+    </div>
+    <div class="layer-row" style="margin-bottom:12px">
+      <span class="layer-name">Satellite Map</span>
+      <label class="toggle">
+        <input type="checkbox" id="toggle-topo" checked />
+        <span class="toggle-slider"></span>
+      </label>
+      <br>
     </div>
     <div class="opacity-row">
       <div class="opacity-header">

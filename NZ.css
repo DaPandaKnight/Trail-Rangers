@@ -45,7 +45,8 @@ header h1 span { color: var(--accent); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 16px;
-  display: flex; flex-direction: column; gap: 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  
 }
 
 .panel-section-label {
@@ -55,10 +56,10 @@ header h1 span { color: var(--accent); }
 
 /* Layer toggles */
 .layer-row {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: center;
   gap: 8px;
 }
-.layer-name { font-size: 0.75rem; color: var(--text); }
+.layer-name { font-size: 0.75rem; color: var(--text); min-width: 140px; }
 
 /* Toggle switch */
 .toggle { position: relative; width: 36px; height: 20px; flex-shrink: 0; }
@@ -109,3 +110,23 @@ input[type=range]::-webkit-slider-thumb {
   font-size: 0.6rem; color: var(--muted);
 }
 .map-attr a { color: var(--muted); }
+
+/* Difficulty selector */
+.difficulty-group { display: flex; flex-direction: column; gap: 8px; }
+.difficulty-option {
+  display: flex; align-items: center; gap: 8px;
+  cursor: pointer; font-size: 0.75rem; color: var(--text);
+}
+.difficulty-option input[type="radio"] {
+  appearance: none; -webkit-appearance: none;
+  width: 14px; height: 14px; border: 1px solid var(--border);
+  border-radius: 50%; cursor: pointer;
+  background: var(--panel); transition: all 0.2s;
+}
+.difficulty-option input[type="radio"]:checked {
+  background: var(--accent); border-color: var(--accent);
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+.difficulty-option input[type="radio"]:hover {
+  border-color: var(--accent);
+}
