@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>NZ Terrain Explorer</title>
+
+  <!-- MapLibre GL JS -->
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="Styling.css">
+</head>
+
+<body>
+
+
+
+  <div class="coord-display" id="coords">Move cursor over map to show coordinates</div>
+
+  <div id="map"></div>
+
+  <div id="panel">
+
+    <div class="logo-container">
+      <img src="RidgeWalker.png" class="panel-logo" />
+    </div>
+
+    <div>
+      <div class="panel-section-label">Difficulty</div>
+      <div class="difficulty-group">
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="easy" checked />
+          <span>Easy</span>
+        </label>
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="medium" />
+          <span>Medium</span>
+        </label>
+        <label class="difficulty-option">
+          <input type="radio" name="difficulty" value="hard" />
+          <span>Hard</span>
+        </label>
+      </div>
+
+    </div>
+
+    <div>
+      <div class="panel-section-label">Base Layer</div>
+      <div class="layer-row">
+        <span class="layer-name">Aerial Imagery</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-aerial" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Overlay</div>
+      <div class="layer-row">
+        <span class="layer-name">Topographic Map</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-topo" checked />
+          <span class="toggle-slider"></span>
+        </label>
+        <br>
+      </div>
+
+      <div class="opacity-row">
+        <div class="opacity-header">
+          <span class="panel-section-label">Topo Opacity</span>
+          <span class="opacity-val" id="opacity-val">60%</span>
+        </div>
+        <input type="range" id="topo-opacity" min="0" max="100" value="60" />
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Zoom</div>
+      <div class="zoom-row">
+        <button class="zoom-btn" id="zoom-in">+</button>
+        <button class="zoom-btn" id="zoom-out">−</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script script src="MapLogic.js" defer></script>
+</body>
+
+</html>
