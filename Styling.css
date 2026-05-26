@@ -40,7 +40,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: flex;
   justify-content: center;
   padding-bottom: 4px;
-  border-bottom: 1px solid var(--border);
   margin-bottom: 4px;
   overflow: hidden;
 }
