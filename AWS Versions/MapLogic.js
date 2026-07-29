@@ -1,7 +1,5 @@
 // ── CONFIG ───────────────────────────────────────────────────────────────
   // No LINZ key here anymore — it lives server-side in Secrets Manager.
-  // Replace this with your real API Gateway invoke URL once deployed, e.g.
-  // 'https://abc123xyz.execute-api.ap-southeast-2.amazonaws.com'
   const API_BASE = 'https://k3w7aj90ok.execute-api.ap-southeast-2.amazonaws.com';
   const LINZ_ORIGIN = 'https://basemaps.linz.govt.nz/v1/';
   // ─────────────────────────────────────────────────────────────────────────
