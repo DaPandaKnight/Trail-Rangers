@@ -30,7 +30,7 @@
     container: 'map',
     style: {
       version: 8,
-      glyphs: 'https://fonts.openmaptitles.org/{fontstack}/{range}.pbf',
+      glyphs: 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf',
       sources: {
         aerial: {
           type: 'raster',
