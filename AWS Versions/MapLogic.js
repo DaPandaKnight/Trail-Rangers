@@ -60,6 +60,8 @@
     try {
       const resp  = await fetch(TOPO_STYLE_URL);
       const style = await resp.json();
+      style.glyphs =
+        'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf';
 
       // Add each topo source into the map
       for (const [id, src] of Object.entries(style.sources || {})) {
