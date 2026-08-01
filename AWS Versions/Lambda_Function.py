@@ -23,6 +23,7 @@ import json
 import base64
 import urllib.request
 import urllib.error
+import urllib.parse
 
 LINZ_BASE = "https://basemaps.linz.govt.nz/v1"
 
@@ -62,6 +63,10 @@ def lambda_handler(event, context):
         return {"statusCode": 404, "body": "Not found"}
 
     linz_path = raw_path.split("/proxy/", 1)[1]
+    linz_path = urllib.parse.quote(
+        urllib.parse.unquote(linz_path),
+        safe="/"
+    )
     qs = event.get("rawQueryString", "")
     joiner = "&" if qs else ""
     url = f"{LINZ_BASE}/{linz_path}?{qs}{joiner}api={key}"
