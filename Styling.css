@@ -149,6 +149,65 @@ input[type=range]::-webkit-slider-thumb {
 }
 .map-attr a { color: var(--muted); }
 
+/* Route popup (MapLibre) */
+.maplibregl-popup {
+  z-index: 20;
+}
+
+.maplibregl-popup-content {
+  background: rgba(20, 24, 23, 0.96);
+  backdrop-filter: blur(16px);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+}
+
+.maplibregl-popup-content h1,
+.maplibregl-popup-content h2,
+.maplibregl-popup-content h3 {
+  font-size: 0.65rem;
+  font-weight: 500;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  margin-bottom: 8px;
+}
+
+.maplibregl-popup-close-button {
+  color: var(--muted);
+  font-size: 1rem;
+  padding: 4px 8px;
+}
+.maplibregl-popup-close-button:hover {
+  color: var(--accent);
+  background: transparent;
+}
+
+.maplibregl-popup-anchor-top .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
+  border-bottom-color: var(--panel);
+}
+
+.maplibregl-popup-anchor-bottom .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-left .maplibregl-popup-tip,
+.maplibregl-popup-anchor-bottom-right .maplibregl-popup-tip {
+  border-top-color: var(--panel);
+}
+
+.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+  border-right-color: var(--panel);
+}
+
+.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+  border-left-color: var(--panel);
+}
+
 
 /* ─────────────────────────────────────────
    Responsive and mobile improvements

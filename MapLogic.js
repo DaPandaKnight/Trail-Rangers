@@ -204,6 +204,7 @@ function initialiseMapControls() {
   initialiseLayerToggles();
   initialiseOpacitySlider();
   initialiseZoomButtons();
+  initialiseRoutePopup();
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -337,6 +338,32 @@ function initialiseZoomButtons() {
     console.warn('Zoom-out button with ID "zoom-out" was not found.');
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Route Popup
+// ─────────────────────────────────────────────────────────────────────────
+
+function initialiseRoutePopup() {
+  let popup = new maplibregl.Popup
+
+  map.on('click', e => {
+    popup
+      .setLngLat(e.lngLat)
+      .setHTML("<h1>This is a popup</h1>")
+      .addTo(map);
+  })  
+  
+    // event listener to log everytime the popup is opened
+  popup.on('open', () => {
+    console.log("popup is open")
+  })
+
+  // event listern to log everytime the popup is closed
+  popup.on('close', () => {
+    console.log("popup was closed")
+  })
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────
 // Error message
