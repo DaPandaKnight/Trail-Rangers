@@ -24,6 +24,22 @@ let topoOpacity = 0.6;
 // Prevent controls from being initialised more than once
 let controlsInitialised = false;
 
+// TODO: update to wherever the Flask app in terrain_routing_v5.py is
+// actually running once it's deployed/started.
+const ROUTE_API_URL = 'http://localhost:5000/route';
+
+// Hardcoded test waypoints, since there's no waypoint picker yet.
+// These match DEFAULT_TEST_BBOX's corners in terrain_routing_v5.py.
+const TEST_WAYPOINT_A = [175.60, -39.16]; // [lon, lat]
+const TEST_WAYPOINT_B = [175.62, -39.15];
+
+const ROUTE_SOURCE_ID = 'route';
+const ROUTE_LINE_LAYER_ID = 'route-line';
+
+// Stats for whichever route is currently drawn, read by the click popup.
+let activeRouteDetails = null;
+let routePopup = null;
+
 // ─────────────────────────────────────────────────────────────────────────
 // Initialise map
 // ─────────────────────────────────────────────────────────────────────────
@@ -205,6 +221,8 @@ function initialiseMapControls() {
   initialiseOpacitySlider();
   initialiseZoomButtons();
   initialiseRoutePopup();
+
+  generateRoute(TEST_WAYPOINT_A, TEST_WAYPOINT_B);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -340,28 +358,119 @@ function initialiseZoomButtons() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Route Popup
+// Route generation
 // ─────────────────────────────────────────────────────────────────────────
 
+async function generateRoute(waypointA, waypointB) {
+  try {
+    const response = await fetch(ROUTE_API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ a: waypointA, b: waypointB })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Route request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    if (!result.ok) {
+      throw new Error(result.error || 'Routing failed.');
+    }
+
+    drawRoute(result);
+  } catch (error) {
+    console.error('Failed to generate route:', error);
+  }
+}
+
+function drawRoute(result) {
+  activeRouteDetails = {
+    distance_km: result.distance_km,
+    estimated_hours: result.estimated_hours,
+    climb_m: result.climb_m
+  };
+
+  const existingSource = map.getSource(ROUTE_SOURCE_ID);
+
+  if (existingSource) {
+    existingSource.setData(result.route);
+  } else {
+    map.addSource(ROUTE_SOURCE_ID, {
+      type: 'geojson',
+      data: result.route
+    });
+
+    map.addLayer({
+      id: ROUTE_LINE_LAYER_ID,
+      type: 'line',
+      source: ROUTE_SOURCE_ID,
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': '#ff8400',
+        'line-width': 4
+      }
+    });
+  }
+
+  const coordinates = result.route.geometry.coordinates;
+
+  const bounds = coordinates.reduce(
+    (bounds, coord) => bounds.extend(coord),
+    new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+  );
+
+  map.fitBounds(bounds, { padding: 60 });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Route popup
+// ─────────────────────────────────────────────────────────────────────────
+
+function formatDuration(hours) {
+  if (!Number.isFinite(hours)) return 'Unknown';
+
+  const totalMinutes = Math.round(hours * 60);
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+
+  if (h === 0) return `${m} min`;
+  if (m === 0) return `${h} h`;
+  return `${h} h ${m} min`;
+}
+
 function initialiseRoutePopup() {
-  let popup = new maplibregl.Popup
+  map.on('mouseenter', ROUTE_LINE_LAYER_ID, () => {
+    map.getCanvas().style.cursor = 'pointer';
+  });
 
-  map.on('click', e => {
-    popup
-      .setLngLat(e.lngLat)
-      .setHTML("<h1>This is a popup</h1>")
+  map.on('mouseleave', ROUTE_LINE_LAYER_ID, () => {
+    map.getCanvas().style.cursor = '';
+  });
+
+  map.on('click', ROUTE_LINE_LAYER_ID, event => {
+    if (!activeRouteDetails) return;
+
+    const { distance_km, estimated_hours, climb_m } = activeRouteDetails;
+
+    if (routePopup) {
+      routePopup.remove();
+    }
+
+    routePopup = new maplibregl.Popup()
+      .setLngLat(event.lngLat)
+      .setHTML(`
+        <h3>Route Details</h3>
+        <div>Distance: ${distance_km.toFixed(2)} km</div>
+        <div>Est. time: ${formatDuration(estimated_hours)}</div>
+        <div>Climb: ${Math.round(climb_m)} m</div>
+      `)
       .addTo(map);
-  })  
-  
-    // event listener to log everytime the popup is opened
-  popup.on('open', () => {
-    console.log("popup is open")
-  })
-
-  // event listern to log everytime the popup is closed
-  popup.on('close', () => {
-    console.log("popup was closed")
-  })
+  });
 }
 
 
