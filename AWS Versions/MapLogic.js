@@ -30,8 +30,8 @@
     container: 'map',
     style: {
       version: 8,
-      sprite: '${API_BASE}/proxy/sprites/topographic',
-      glyphs: '${API_BASE}/proxy/fonts/{fontstack}/{range}.pbf',
+      sprite: `${API_BASE}/proxy/sprites/topographic`,
+      glyphs: `${API_BASE}/proxy/fonts/{fontstack}/{range}.pbf`,
       sources: {
         aerial: {
           type: 'raster',
