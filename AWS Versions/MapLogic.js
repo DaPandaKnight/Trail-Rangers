@@ -30,7 +30,7 @@
     const path = parsed.pathname.replace(/^\/v1\//, '');
 
     return {
-      url: ${API_BASE}/proxy/${path}${parsed.search}
+      url: '${API_BASE}/proxy/${path}${parsed.search}'
     };
   }
 
