@@ -18,12 +18,24 @@
   // redirect it through our own proxy instead. This is what actually keeps
   // the key out of the browser, regardless of how deeply LINZ nests things.
   function transformRequest(url, resourceType) {
-    if (url.startsWith(LINZ_ORIGIN)) {
-      const path = url.slice(LINZ_ORIGIN.length).split('?')[0];
-      return { url: `${API_BASE}/proxy/${path}` };
-    }
-    return { url };
+  if (url.startsWith(LINZ_ORIGIN)) {
+    const fixedUrl = url.replace(
+      '.png&pipeline=',
+      '.png?pipeline='
+    );
+
+    const parsed = new URL(fixedUrl);
+    parsed.searchParams.delete('api');
+
+    const path = parsed.pathname.replace(/^\/v1\//, '');
+
+    return {
+      url: ${API_BASE}/proxy/${path}${parsed.search}
+    };
   }
+
+  return { url };
+}
 
   // Start with aerial only — topo vector layers added after map loads
   const map = new maplibregl.Map({
