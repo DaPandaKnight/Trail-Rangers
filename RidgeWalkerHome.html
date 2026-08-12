@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  
+  <title>NZ Terrain Explorer</title>
+  <link rel="icon" type="image/png" href="./RidgeWalker.png">
+
+  <!-- MapLibre GL JS -->
+  <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
+  <script src="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.js"></script>
+
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="Styling.css">
+</head>
+
+<body>
+
+
+
+  <div class="coord-display" id="coords">Move cursor over map to show coordinates</div>
+
+  <div id="map"></div>
+
+  <div id="panel">
+
+    <div class="logo-container">
+      <img src="RidgeWalker.png" class="panel-logo" />
+    </div>
+
+    <div>
+      <div class="panel-section-label">Base Layer</div>
+      <div class="layer-row">
+        <span class="layer-name">Aerial Imagery</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-aerial" checked />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Overlay</div>
+      <div class="layer-row">
+        <span class="layer-name">Topographic Map</span>
+        <label class="toggle">
+          <input type="checkbox" id="toggle-topo" checked />
+          <span class="toggle-slider"></span>
+        </label>
+        <br>
+      </div>
+
+      <div class="opacity-row">
+        <div class="opacity-header">
+          <span class="panel-section-label">Topo Opacity</span>
+          <span class="opacity-val" id="opacity-val">60%</span>
+        </div>
+        <input type="range" id="topo-opacity" min="0" max="100" value="60" />
+      </div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Route</div>
+
+      <p class="route-hint" id="route-hint">Drop a start and end pin, then drag to fine-tune</p>
+
+      <div class="route-points">
+        <div class="route-point-row">
+          <span class="point-dot point-dot-start" id="point-a-dot"></span>
+          <span class="point-label">Start</span>
+          <span class="point-coords" id="point-a-coords">Not set</span>
+        </div>
+        <div class="route-point-row">
+          <span class="point-dot point-dot-end" id="point-b-dot"></span>
+          <span class="point-label">End</span>
+          <span class="point-coords" id="point-b-coords">Not set</span>
+        </div>
+      </div>
+
+      <div class="route-actions">
+        <button class="btn-secondary btn-start" id="place-start">Drop Start Pin</button>
+        <button class="btn-secondary btn-end" id="place-end">Drop End Pin</button>
+      </div>
+
+      <div class="route-actions">
+        <button class="btn-primary" id="generate-route" disabled>Generate Route</button>
+        <button class="btn-secondary" id="clear-route">Clear</button>
+      </div>
+
+      <div class="route-stats" id="route-stats" hidden>
+        <div class="route-stat">
+          <span class="route-stat-label">Distance</span>
+          <span class="route-stat-value" id="stat-distance">—</span>
+        </div>
+        <div class="route-stat">
+          <span class="route-stat-label">Est. time</span>
+          <span class="route-stat-value" id="stat-time">—</span>
+        </div>
+        <div class="route-stat">
+          <span class="route-stat-label">Climb</span>
+          <span class="route-stat-value" id="stat-climb">—</span>
+        </div>
+      </div>
+
+      <div class="route-error" id="route-error" hidden></div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Zoom</div>
+      <div class="zoom-row">
+        <button class="zoom-btn" id="zoom-in">+</button>
+        <button class="zoom-btn" id="zoom-out">−</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="MapLogic.js" defer></script>
+</body>
+
+</html>
+
