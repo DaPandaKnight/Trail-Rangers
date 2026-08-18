@@ -24,11 +24,7 @@ let topoOpacity = 0.6;
 // Prevent controls from being initialised more than once
 let controlsInitialised = false;
 
-// TODO: update to wherever the Flask app in terrain_routing_v5.py is
-// actually running once it's deployed/started. Deliberately not port
-// 5000 or the "localhost" hostname — on macOS, "localhost" can resolve
-// to the IPv6 loopback, which AirPlay Receiver occupies on port 5000 by
-// default, silently intercepting the request before it reaches Flask.
+// Port being 5050 because macOS doesn't really work on 5000 port 
 const ROUTE_API_URL = 'http://127.0.0.1:5050/route';
 
 // Hardcoded test waypoints, since there's no waypoint picker yet.

@@ -585,6 +585,13 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
     return app
 
 
+# ── Running the API ─────────────────────────────────────────────────────
+#
+# Start the server:   python3 terrain_routing_v5.py --serve
+#
+# The old CLI test still works unchanged:
+#   python3 terrain_routing_v5.py <lon_a> <lat_a> <lon_b> <lat_b>
+
 if __name__ == "__main__":
     import argparse
     import json
