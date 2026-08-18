@@ -165,7 +165,7 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
   // click-and-drag panning — a plain map click was unreliable for this.
 
   const START_COLOR = '#ff8400'; // matches --accent
-  const END_COLOR   = '#00c9ff'; // matches --accent2
+  const END_COLOR   = '#2fd4a0'; // matches --accent2
 
   const routeHintEl      = document.getElementById('route-hint');
   const pointADotEl      = document.getElementById('point-a-dot');
