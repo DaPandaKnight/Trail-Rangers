@@ -2,8 +2,15 @@
 Like AllTrails but better cause it accounts for terrain at places with no current trails / tracks / paths. 
 
 Things to do
-- Logo looks out of place. I want it on the website somewhere
-- Are we happy with colour scheme? I like beige instead of black. Seems more topographic
-- Need to put markers for A and B see (https://docs.mapbox.com/mapbox-gl-js/example/drag-a-marker/)
-- MapLibre is great.
-- Reset Button
+- Fix Console Error (AJaxe....) uploaded to current working system (Lilac)
+- Fix the UI, not dark mode much logo better. Waypoint/path colour change. Make it pretty (Dennis)
+- Export path as downloadable GPX (Ill add a download button) (Joe) 
+- Make website handle larger routes (Joe)
+- Route Generation quirks - water, ocean, double check climb/time. (Alex)
+- Route Tailoring (sit with janosh) and check it (Alex)
+- Code cleaning (Laura)
+- Distracting Kiwi while processing ?? Loading Screen (Laura) 
+- Major Report (Laura)
+- Marketing - Posters/Graphs/Animations (Jason)
+- New LOGO (Jason)
+

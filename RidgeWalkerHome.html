@@ -31,25 +31,6 @@
     </div>
 
     <div>
-      <div class="panel-section-label">Difficulty</div>
-      <div class="difficulty-group">
-        <label class="difficulty-option">
-          <input type="radio" name="difficulty" value="easy" checked />
-          <span>Easy</span>
-        </label>
-        <label class="difficulty-option">
-          <input type="radio" name="difficulty" value="medium" />
-          <span>Medium</span>
-        </label>
-        <label class="difficulty-option">
-          <input type="radio" name="difficulty" value="hard" />
-          <span>Hard</span>
-        </label>
-      </div>
-
-    </div>
-
-    <div>
       <div class="panel-section-label">Base Layer</div>
       <div class="layer-row">
         <span class="layer-name">Aerial Imagery</span>
@@ -78,6 +59,52 @@
         </div>
         <input type="range" id="topo-opacity" min="0" max="100" value="60" />
       </div>
+    </div>
+
+    <div>
+      <div class="panel-section-label">Route</div>
+
+      <p class="route-hint" id="route-hint">Drop a start and end pin, then drag to fine-tune</p>
+
+      <div class="route-points">
+        <div class="route-point-row">
+          <span class="point-dot point-dot-start" id="point-a-dot"></span>
+          <span class="point-label">Start</span>
+          <span class="point-coords" id="point-a-coords">Not set</span>
+        </div>
+        <div class="route-point-row">
+          <span class="point-dot point-dot-end" id="point-b-dot"></span>
+          <span class="point-label">End</span>
+          <span class="point-coords" id="point-b-coords">Not set</span>
+        </div>
+      </div>
+
+      <div class="route-actions">
+        <button class="btn-secondary btn-start" id="place-start">Drop Start Pin</button>
+        <button class="btn-secondary btn-end" id="place-end">Drop End Pin</button>
+      </div>
+
+      <div class="route-actions">
+        <button class="btn-primary" id="generate-route" disabled>Generate Route</button>
+        <button class="btn-secondary" id="clear-route">Clear</button>
+      </div>
+
+      <div class="route-stats" id="route-stats" hidden>
+        <div class="route-stat">
+          <span class="route-stat-label">Distance</span>
+          <span class="route-stat-value" id="stat-distance">—</span>
+        </div>
+        <div class="route-stat">
+          <span class="route-stat-label">Est. time</span>
+          <span class="route-stat-value" id="stat-time">—</span>
+        </div>
+        <div class="route-stat">
+          <span class="route-stat-label">Climb</span>
+          <span class="route-stat-value" id="stat-climb">—</span>
+        </div>
+      </div>
+
+      <div class="route-error" id="route-error" hidden></div>
     </div>
 
     <div>

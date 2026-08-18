@@ -1,467 +1,453 @@
-// ─────────────────────────────────────────────────────────────────────────
-// RidgeWalker Map Configuration
-// ─────────────────────────────────────────────────────────────────────────
+// ── CONFIG ───────────────────────────────────────────────────────────────
+  // No LINZ key here anymore — it lives server-side in Secrets Manager.
+  const API_BASE = 'https://k3w7aj90ok.execute-api.ap-southeast-2.amazonaws.com';
+  const LINZ_ORIGIN = 'https://basemaps.linz.govt.nz/v1/';
+  // ─────────────────────────────────────────────────────────────────────────
 
-// For a public prototype, avoid committing this API key to a public repository.
-const LINZ_API_KEY = 'c01kqxnkw0j9qyfvywax1ga2wcb';
+  // Route lambda — deployed separately from the tile proxy (see
+  // route-generator.py). Assumed here to be wired up as a second route
+  // on the SAME API Gateway as the tile proxy. If you deploy it as its
+  // own API Gateway instead, update this URL to match.
+  const ROUTE_API_URL = `https://2azkao04yb.execute-api.ap-southeast-2.amazonaws.com/route`;
 
-const AERIAL_URL =
-  `https://basemaps.linz.govt.nz/v1/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp?api=${LINZ_API_KEY}`;
+  const AERIAL_URL =
+    `${API_BASE}/proxy/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp`;
 
-const TOPO_STYLE_URL =
-  `https://basemaps.linz.govt.nz/v1/tiles/topographic/WebMercatorQuad/style/topographic.json?api=${LINZ_API_KEY}`;
+  // Topo is a vector tile service — loaded via StyleJSON after map init.
+  // Requested through the SAME generic proxy route as everything else now.
+  const TOPO_STYLE_URL =
+    `${API_BASE}/proxy/tiles/topographic/WebMercatorQuad/style/topographic.json`;
 
-// ─────────────────────────────────────────────────────────────────────────
-// Map state
-// ─────────────────────────────────────────────────────────────────────────
+  // MapLibre calls this before EVERY request it makes internally — tiles,
+  // sprites, glyphs, and any nested TileJSON documents a style references.
+  // Whatever LINZ URL shows up here (even one we didn't anticipate), we
+  // redirect it through our own proxy instead. This is what actually keeps
+  // the key out of the browser, regardless of how deeply LINZ nests things.
+  function transformRequest(url, resourceType) {
+  if (url.startsWith(LINZ_ORIGIN)) {
+    const fixedUrl = url.replace(
+      '.png&pipeline=',
+      '.png?pipeline='
+    );
 
-let map;
+    const parsed = new URL(fixedUrl);
+    parsed.searchParams.delete('api');
 
-let topoLayerIds = [];
-let topoVisible = true;
-let topoOpacity = 0.6;
+    const path = parsed.pathname.replace(/^\/v1\//, '');
 
-// Prevent controls from being initialised more than once
-let controlsInitialised = false;
+    return {
+      url: API_BASE + '/proxy/' + path + parsed.search
 
-// Port being 5050 because macOS doesn't really work on 5000 port 
-const ROUTE_API_URL = 'http://127.0.0.1:5050/route';
+    };
+  }
 
-// Hardcoded test waypoints, since there's no waypoint picker yet.
-// These match DEFAULT_TEST_BBOX's corners in terrain_routing_v5.py.
-const TEST_WAYPOINT_A = [175.60, -39.16]; // [lon, lat]
-const TEST_WAYPOINT_B = [175.60, -39.15];
+  return { url };
+}
 
-const ROUTE_SOURCE_ID = 'route';
-const ROUTE_LINE_LAYER_ID = 'route-line';
+if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
+  maplibregl.setMaxParallelImageRequests(4);
+}
 
-// Stats for whichever route is currently drawn, read by the click popup.
-let activeRouteDetails = null;
-let routePopup = null;
-
-// ─────────────────────────────────────────────────────────────────────────
-// Initialise map
-// ─────────────────────────────────────────────────────────────────────────
-
-async function initialiseMap() {
-  try {
-    const response = await fetch(TOPO_STYLE_URL);
-
-    if (!response.ok) {
-      throw new Error(
-        `LINZ topographic style request failed: ` +
-        `${response.status} ${response.statusText}`
-      );
-    }
-
-    const topoStyle = await response.json();
-
-    if (!topoStyle.sources || !topoStyle.layers) {
-      throw new Error(
-        'The LINZ topographic response does not contain valid sources or layers.'
-      );
-    }
-
-    // Store the IDs of all original LINZ topographic layers.
-    // This allows the visibility and opacity controls to update only topo layers.
-    topoLayerIds = topoStyle.layers.map(layer => layer.id);
-
-    const combinedStyle = {
+  // Start with aerial only — topo vector layers added after map loads
+  const map = new maplibregl.Map({
+    container: 'map',
+    style: {
       version: 8,
-
-      // LINZ sprite sheet.
-      // This contains patterns and icons such as moraine_poly_half.
-      ...(topoStyle.sprite && {
-        sprite: topoStyle.sprite
-      }),
-
-      // LINZ glyphs used for map labels.
-      ...(topoStyle.glyphs && {
-        glyphs: topoStyle.glyphs
-      }),
-
+      sprite: `${API_BASE}/proxy/sprites/topographic`,
+      glyphs: `${API_BASE}/proxy/fonts/{fontstack}/{range}.pbf`,
       sources: {
-        // RidgeWalker aerial raster source
         aerial: {
           type: 'raster',
           tiles: [AERIAL_URL],
           tileSize: 256,
           attribution: '© LINZ CC BY 4.0'
-        },
-
-        // LINZ topographic vector sources
-        ...topoStyle.sources
+        }
       },
-
       layers: [
-        // Add aerial first so all topographic layers appear above it
-        {
-          id: 'aerial-layer',
-          type: 'raster',
-          source: 'aerial',
-          paint: {
-            'raster-opacity': 1
-          }
-        },
-
-        // Add all LINZ topographic layers
-        ...topoStyle.layers
+        { id: 'aerial-layer', type: 'raster', source: 'aerial', paint: { 'raster-opacity': 1 } }
       ]
-    };
+    },
+    center: [172.5, -41.0],
+    zoom: 5,
+    minZoom: 4,
+    maxZoom: 19,
+    transformRequest: transformRequest,
+  });
 
-    map = new maplibregl.Map({
-      container: 'map',
-      style: combinedStyle,
-      center: [172.5, -41.0],
-      zoom: 5,
-      minZoom: 4,
-      maxZoom: 19,
+  // ── Load topo vector style and add its sources/layers on top ─────────────
+  let topoLayerIds = [];   // track which layer IDs belong to topo
+  let topoVisible  = true;
+  let topoOpacity  = 0.6;
 
-      // Mobile and desktop map interactions
-      dragPan: true,
-      scrollZoom: true,
-      touchZoomRotate: true
-    });
-
-    // Prevent accidental rotation when users pinch-zoom on mobile
-    map.touchZoomRotate.disableRotation();
-
-    map.on('load', () => {
-      applyTopoOpacity(topoOpacity);
-      initialiseMapControls();
-
-      console.log('RidgeWalker map loaded successfully.');
-    });
-
-    map.on('error', event => {
-      console.error('MapLibre error:', event.error || event);
-    });
-
-  } catch (error) {
-    console.error('Failed to initialise the RidgeWalker map:', error);
-
-    showMapError(
-      'The map could not be loaded. Please check your internet connection ' +
-      'and LINZ API configuration.'
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Apply topographic opacity
-// ─────────────────────────────────────────────────────────────────────────
-
-function applyTopoOpacity(opacity) {
-  if (!map) return;
-
-  for (const id of topoLayerIds) {
-    const layer = map.getLayer(id);
-
-    if (!layer) continue;
+  map.on('load', async () => {
 
     try {
-      switch (layer.type) {
-        case 'fill':
-          map.setPaintProperty(id, 'fill-opacity', opacity);
-          break;
-
-        case 'background':
-          map.setPaintProperty(id, 'background-opacity', opacity);
-          break;
-
-        case 'line':
-          map.setPaintProperty(id, 'line-opacity', opacity);
-          break;
-
-        case 'symbol':
-          map.setPaintProperty(id, 'icon-opacity', opacity);
-          map.setPaintProperty(id, 'text-opacity', opacity);
-          break;
-
-        case 'circle':
-          map.setPaintProperty(id, 'circle-opacity', opacity);
-          break;
-
-        case 'raster':
-          map.setPaintProperty(id, 'raster-opacity', opacity);
-          break;
-
-        case 'heatmap':
-          map.setPaintProperty(id, 'heatmap-opacity', opacity);
-          break;
-
-        case 'fill-extrusion':
-          map.setPaintProperty(id, 'fill-extrusion-opacity', opacity);
-          break;
-
-        default:
-          break;
+      const resp  = await fetch(TOPO_STYLE_URL);
+      const style = await resp.json();
+      // Add each topo source into the map
+      for (const [id, src] of Object.entries(style.sources || {})) {
+        if (!map.getSource(id)) map.addSource(id, src);
       }
-    } catch (error) {
-      console.warn(
-        `Could not change opacity for topographic layer "${id}".`,
-        error
-      );
-    }
-  }
-}
 
-// ─────────────────────────────────────────────────────────────────────────
-// Initialise interface controls
-// ─────────────────────────────────────────────────────────────────────────
-
-function initialiseMapControls() {
-  if (controlsInitialised) return;
-
-  controlsInitialised = true;
-
-  initialiseCoordinateDisplay();
-  initialiseLayerToggles();
-  initialiseOpacitySlider();
-  initialiseZoomButtons();
-  initialiseRoutePopup();
-
-  generateRoute(TEST_WAYPOINT_A, TEST_WAYPOINT_B);
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Coordinate display
-// ─────────────────────────────────────────────────────────────────────────
-
-function initialiseCoordinateDisplay() {
-  const coordsEl = document.getElementById('coords');
-
-  if (!coordsEl) {
-    console.warn('Coordinate display element with ID "coords" was not found.');
-    return;
-  }
-
-  function updateCoordinates(lngLat) {
-    if (!lngLat) return;
-
-    const { lng, lat } = lngLat;
-
-    coordsEl.textContent =
-      `Longitude: ${lng.toFixed(5)}° ` +
-      `Latitude: ${lat.toFixed(5)}°`;
-  }
-
-  // Desktop pointer movement
-  map.on('mousemove', event => {
-    updateCoordinates(event.lngLat);
-  });
-
-  // Mobile tap
-  map.on('click', event => {
-    updateCoordinates(event.lngLat);
-  });
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Layer visibility controls
-// ─────────────────────────────────────────────────────────────────────────
-
-function initialiseLayerToggles() {
-  const aerialToggle = document.getElementById('toggle-aerial');
-  const topoToggle = document.getElementById('toggle-topo');
-
-  if (aerialToggle) {
-    aerialToggle.addEventListener('change', event => {
-      if (!map.getLayer('aerial-layer')) return;
-
-      map.setLayoutProperty(
-        'aerial-layer',
-        'visibility',
-        event.target.checked ? 'visible' : 'none'
-      );
-    });
-  } else {
-    console.warn('Aerial toggle with ID "toggle-aerial" was not found.');
-  }
-
-  if (topoToggle) {
-    topoToggle.addEventListener('change', event => {
-      topoVisible = event.target.checked;
-
-      const visibility = topoVisible ? 'visible' : 'none';
-
-      for (const id of topoLayerIds) {
-        if (map.getLayer(id)) {
-          map.setLayoutProperty(id, 'visibility', visibility);
+      // Add each topo layer on top of aerial, recording its id
+      for (const layer of (style.layers || [])) {
+        if (!map.getLayer(layer.id)) {
+          map.addLayer(layer);
+          topoLayerIds.push(layer.id);
         }
       }
-    });
-  } else {
-    console.warn('Topo toggle with ID "toggle-topo" was not found.');
+
+      // Apply initial opacity to all topo layers
+      applyTopoOpacity(topoOpacity);
+
+    } catch (err) {
+      console.error('Failed to load LINZ topo style:', err);
+    }
+
+  });
+
+  // Helper — set opacity on every topo layer based on its type
+  function applyTopoOpacity(opacity) {
+    for (const id of topoLayerIds) {
+      if (!map.getLayer(id)) continue;
+      const type = map.getLayer(id).type;
+      try {
+        if (type === 'fill')   map.setPaintProperty(id, 'fill-opacity',    opacity);
+        if (type === 'background') map.setPaintProperty(id, 'background-opacity', opacity);
+        if (type === 'line')   map.setPaintProperty(id, 'line-opacity',    opacity);
+        if (type === 'symbol') map.setPaintProperty(id, 'icon-opacity',    opacity);
+        if (type === 'symbol') map.setPaintProperty(id, 'text-opacity',    opacity);
+        if (type === 'circle') map.setPaintProperty(id, 'circle-opacity',  opacity);
+        if (type === 'raster') map.setPaintProperty(id, 'raster-opacity',  opacity);
+      } catch(_) {}
+    }
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────
-// Topographic opacity control
-// ─────────────────────────────────────────────────────────────────────────
+  // ── Coordinate display ───────────────────────────────────────────────────
+  const coordsEl = document.getElementById('coords');
+  map.on('mousemove', e => {
+    const { lng, lat } = e.lngLat;
+    coordsEl.textContent = `Longitude: ${lng.toFixed(5)}° Latitude: ${lat.toFixed(5)}° `;
+  });
 
-function initialiseOpacitySlider() {
-  const opacitySlider = document.getElementById('topo-opacity');
-  const opacityVal = document.getElementById('opacity-val');
+  // ── Layer toggles ────────────────────────────────────────────────────────
+  document.getElementById('toggle-aerial').addEventListener('change', e => {
+    map.setLayoutProperty('aerial-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+  });
 
-  if (!opacitySlider) {
-    console.warn('Opacity slider with ID "topo-opacity" was not found.');
-    return;
-  }
-
-  // Set the initial slider position to match topoOpacity
-  opacitySlider.value = String(Math.round(topoOpacity * 100));
-
-  if (opacityVal) {
-    opacityVal.textContent = `${opacitySlider.value}%`;
-  }
-
-  opacitySlider.addEventListener('input', () => {
-    const sliderValue = Number(opacitySlider.value);
-
-    if (!Number.isFinite(sliderValue)) return;
-
-    topoOpacity = sliderValue / 100;
-
-    applyTopoOpacity(topoOpacity);
-
-    if (opacityVal) {
-      opacityVal.textContent = `${sliderValue}%`;
+  document.getElementById('toggle-topo').addEventListener('change', e => {
+    topoVisible = e.target.checked;
+    const vis = topoVisible ? 'visible' : 'none';
+    for (const id of topoLayerIds) {
+      if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', vis);
     }
   });
-}
 
-// ─────────────────────────────────────────────────────────────────────────
-// Zoom controls
-// ─────────────────────────────────────────────────────────────────────────
+  // ── Opacity slider ───────────────────────────────────────────────────────
+  const opacitySlider = document.getElementById('topo-opacity');
+  const opacityVal    = document.getElementById('opacity-val');
+  opacitySlider.addEventListener('input', () => {
+    topoOpacity = opacitySlider.value / 100;
+    applyTopoOpacity(topoOpacity);
+    opacityVal.textContent = `${opacitySlider.value}%`;
+  });
 
-function initialiseZoomButtons() {
-  const zoomInButton = document.getElementById('zoom-in');
-  const zoomOutButton = document.getElementById('zoom-out');
 
-  if (zoomInButton) {
-    zoomInButton.addEventListener('click', () => {
-      map.zoomIn();
-    });
-  } else {
-    console.warn('Zoom-in button with ID "zoom-in" was not found.');
+  // ── Zoom buttons ─────────────────────────────────────────────────────────
+  document.getElementById('zoom-in').addEventListener('click',  () => map.zoomIn());
+  document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
+
+  // ── Route planner ────────────────────────────────────────────────────────
+  // Drop a start/end pin with a button (places it at the current map
+  // center), then drag it to fine-tune. Markers own their own drag
+  // gesture (MapLibre disables map panning while a marker drag is in
+  // progress), so this sidesteps any conflict with the map's own
+  // click-and-drag panning — a plain map click was unreliable for this.
+
+  const START_COLOR = '#ff8400'; // matches --accent
+  const END_COLOR   = '#00c9ff'; // matches --accent2
+
+  const routeHintEl      = document.getElementById('route-hint');
+  const pointADotEl      = document.getElementById('point-a-dot');
+  const pointBDotEl      = document.getElementById('point-b-dot');
+  const pointACoordsEl   = document.getElementById('point-a-coords');
+  const pointBCoordsEl   = document.getElementById('point-b-coords');
+  const placeStartBtn    = document.getElementById('place-start');
+  const placeEndBtn      = document.getElementById('place-end');
+  const generateRouteBtn = document.getElementById('generate-route');
+  const clearRouteBtn    = document.getElementById('clear-route');
+  const routeStatsEl     = document.getElementById('route-stats');
+  const statDistanceEl   = document.getElementById('stat-distance');
+  const statTimeEl       = document.getElementById('stat-time');
+  const statClimbEl      = document.getElementById('stat-climb');
+  const routeErrorEl     = document.getElementById('route-error');
+
+  let pointA = null;       // [lon, lat]
+  let pointB = null;       // [lon, lat]
+  let markerA = null;
+  let markerB = null;
+  let routeLoading = false;
+
+  // Stats for whichever route is currently drawn, read by the click popup.
+  let activeRouteDetails = null;
+  let routePopup = null;
+
+  function formatCoords(lon, lat) {
+    return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
 
-  if (zoomOutButton) {
-    zoomOutButton.addEventListener('click', () => {
-      map.zoomOut();
-    });
-  } else {
-    console.warn('Zoom-out button with ID "zoom-out" was not found.');
+  function formatDuration(hours) {
+    const totalMinutes = Math.round(hours * 60);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    if (h === 0) return `${m} min`;
+    return `${h}h ${m}m`;
   }
-}
 
-// ─────────────────────────────────────────────────────────────────────────
-// Route generation
-// ─────────────────────────────────────────────────────────────────────────
-
-async function generateRoute(waypointA, waypointB) {
-  try {
-    const response = await fetch(ROUTE_API_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ a: waypointA, b: waypointB })
-    });
-
-    if (!response.ok) {
-      throw new Error(`Route request failed: ${response.status} ${response.statusText}`);
-    }
-
-    const result = await response.json();
-
-    if (!result.ok) {
-      throw new Error(result.error || 'Routing failed.');
-    }
-
-    drawRoute(result);
-  } catch (error) {
-    console.error('Failed to generate route:', error);
+  function updateRouteHint() {
+    if (routeLoading) return; // hint is owned by the in-flight request while loading
+    if (!pointA && !pointB) routeHintEl.textContent = 'Drop a start and end pin, then drag to fine-tune';
+    else if (!pointA)       routeHintEl.textContent = 'Drop a start pin, then drag it into place';
+    else if (!pointB)       routeHintEl.textContent = 'Drop an end pin, then drag it into place';
+    else                     routeHintEl.textContent = 'Ready — hit Generate Route (drag pins anytime to adjust)';
   }
-}
 
-function drawRoute(result) {
-  activeRouteDetails = {
-    distance_km: result.distance_km,
-    estimated_hours: result.estimated_hours,
-    climb_m: result.climb_m
-  };
+  function clearRouteLine() {
+    if (map.getLayer('route-line')) map.removeLayer('route-line');
+    if (map.getLayer('route-glow')) map.removeLayer('route-glow');
+    if (map.getSource('route'))     map.removeSource('route');
+  }
 
-  const existingSource = map.getSource(ROUTE_SOURCE_ID);
+  // Any pin move invalidates a route that's already on screen — clear it
+  // and hide stale results, but leave the pins themselves alone.
+  function invalidateRoute() {
+    clearRouteLine();
+    routeStatsEl.hidden = true;
+    routeErrorEl.hidden = true;
+  }
 
-  if (existingSource) {
-    existingSource.setData(result.route);
-  } else {
-    map.addSource(ROUTE_SOURCE_ID, {
-      type: 'geojson',
-      data: result.route
-    });
+  function setPointDisplay(which, lng, lat) {
+    const dotEl    = which === 'start' ? pointADotEl    : pointBDotEl;
+    const coordsEl = which === 'start' ? pointACoordsEl : pointBCoordsEl;
+    coordsEl.textContent = formatCoords(lng, lat);
+    coordsEl.classList.add('is-set');
+    dotEl.classList.add('is-set');
+  }
 
-    map.addLayer({
-      id: ROUTE_LINE_LAYER_ID,
-      type: 'line',
-      source: ROUTE_SOURCE_ID,
-      layout: {
-        'line-cap': 'round',
-        'line-join': 'round'
-      },
-      paint: {
-        'line-color': '#ff8400',
-        'line-width': 4
+  function placePin(which) {
+    const center = map.getCenter();
+    const lngLat = [center.lng, center.lat];
+
+    if (which === 'start') {
+      pointA = lngLat;
+      if (markerA) {
+        markerA.setLngLat(lngLat);
+      } else {
+        markerA = new maplibregl.Marker({ color: START_COLOR, draggable: true })
+          .setLngLat(lngLat)
+          .addTo(map);
+        markerA.on('drag', () => {
+          const ll = markerA.getLngLat();
+          pointA = [ll.lng, ll.lat];
+          setPointDisplay('start', ll.lng, ll.lat);
+          invalidateRoute();
+        });
       }
-    });
+      setPointDisplay('start', lngLat[0], lngLat[1]);
+    } else {
+      pointB = lngLat;
+      if (markerB) {
+        markerB.setLngLat(lngLat);
+      } else {
+        markerB = new maplibregl.Marker({ color: END_COLOR, draggable: true })
+          .setLngLat(lngLat)
+          .addTo(map);
+        markerB.on('drag', () => {
+          const ll = markerB.getLngLat();
+          pointB = [ll.lng, ll.lat];
+          setPointDisplay('end', ll.lng, ll.lat);
+          invalidateRoute();
+        });
+      }
+      setPointDisplay('end', lngLat[0], lngLat[1]);
+    }
+
+    invalidateRoute();
+    generateRouteBtn.disabled = !(pointA && pointB);
+    updateRouteHint();
   }
 
-  const coordinates = result.route.geometry.coordinates;
+  function resetRoute() {
+    pointA = null;
+    pointB = null;
 
-  const bounds = coordinates.reduce(
-    (bounds, coord) => bounds.extend(coord),
-    new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
-  );
+    if (markerA) { markerA.remove(); markerA = null; }
+    if (markerB) { markerB.remove(); markerB = null; }
 
-  map.fitBounds(bounds, { padding: 60 });
-}
+    clearRouteLine();
 
-// ─────────────────────────────────────────────────────────────────────────
-// Route popup
-// ─────────────────────────────────────────────────────────────────────────
+    activeRouteDetails = null;
+    if (routePopup) { routePopup.remove(); routePopup = null; }
 
-function formatDuration(hours) {
-  if (!Number.isFinite(hours)) return 'Unknown';
+    pointADotEl.classList.remove('is-set');
+    pointBDotEl.classList.remove('is-set');
+    pointACoordsEl.classList.remove('is-set');
+    pointBCoordsEl.classList.remove('is-set');
+    pointACoordsEl.textContent = 'Not set';
+    pointBCoordsEl.textContent = 'Not set';
+    routeStatsEl.hidden = true;
+    routeErrorEl.hidden = true;
+    generateRouteBtn.disabled = true;
+    updateRouteHint();
+  }
 
-  const totalMinutes = Math.round(hours * 60);
-  const h = Math.floor(totalMinutes / 60);
-  const m = totalMinutes % 60;
+  function drawRoute(routeFeature) {
+    const geojson = { type: 'FeatureCollection', features: [routeFeature] };
 
-  if (h === 0) return `${m} min`;
-  if (m === 0) return `${h} h`;
-  return `${h} h ${m} min`;
-}
+    if (map.getSource('route')) {
+      map.getSource('route').setData(geojson);
+    } else {
+      map.addSource('route', { type: 'geojson', data: geojson });
 
-function initialiseRoutePopup() {
-  map.on('mouseenter', ROUTE_LINE_LAYER_ID, () => {
+      // Soft glow underneath the line
+      map.addLayer({
+        id: 'route-glow',
+        type: 'line',
+        source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': END_COLOR,
+          'line-width': 9,
+          'line-blur': 6,
+          'line-opacity': 0.35,
+        },
+      });
+
+      map.addLayer({
+        id: 'route-line',
+        type: 'line',
+        source: 'route',
+        layout: { 'line-join': 'round', 'line-cap': 'round' },
+        paint: {
+          'line-color': END_COLOR,
+          'line-width': 3.5,
+          'line-opacity': 0.95,
+        },
+      });
+    }
+
+    const coords = routeFeature.geometry.coordinates;
+    const bounds = coords.reduce(
+      (b, c) => b.extend(c),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    );
+    map.fitBounds(bounds, { padding: 80, duration: 800 });
+  }
+
+  placeStartBtn.addEventListener('click', () => { if (!routeLoading) placePin('start'); });
+  placeEndBtn.addEventListener('click',   () => { if (!routeLoading) placePin('end'); });
+
+  generateRouteBtn.addEventListener('click', async () => {
+    if (!pointA || !pointB || routeLoading) return;
+
+    routeLoading = true;
+    generateRouteBtn.disabled = true;
+    generateRouteBtn.textContent = 'Calculating…';
+    clearRouteBtn.disabled = true;
+    placeStartBtn.disabled = true;
+    placeEndBtn.disabled = true;
+    if (markerA) markerA.setDraggable(false);
+    if (markerB) markerB.setDraggable(false);
+    routeErrorEl.hidden = true;
+    routeStatsEl.hidden = true;
+    routeHintEl.textContent = 'Crunching terrain data — this can take up to 30 seconds for longer routes.';
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
+    try {
+      const resp = await fetch(ROUTE_API_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ a: pointA, b: pointB }),
+        signal: controller.signal,
+      });
+
+      clearTimeout(timeoutId);
+
+      let data;
+      try {
+        data = await resp.json();
+      } catch (_) {
+        throw new Error(`Server returned an unreadable response (status ${resp.status}).`);
+      }
+
+      if (!resp.ok || !data.ok) {
+        throw new Error(data.error || `Route request failed (status ${resp.status}).`);
+      }
+
+      drawRoute(data.route);
+
+      activeRouteDetails = {
+        distance_km: data.distance_km,
+        estimated_hours: data.estimated_hours,
+        climb_m: data.climb_m
+      };
+
+      statDistanceEl.textContent = `${data.distance_km.toFixed(2)} km`;
+      statTimeEl.textContent = formatDuration(data.estimated_hours);
+      statClimbEl.textContent = `${Math.round(data.climb_m)} m`;
+      routeStatsEl.hidden = false;
+      routeHintEl.textContent = 'Route generated. Drag either pin to plan a new route.';
+
+    } catch (err) {
+      clearTimeout(timeoutId);
+      const message = err.name === 'AbortError'
+        ? 'The route request timed out. Try two points that are closer together.'
+        : (err.message || 'Something went wrong generating the route.');
+      routeErrorEl.textContent = message;
+      routeErrorEl.hidden = false;
+      routeHintEl.textContent = 'Ready — hit Generate Route to try again.';
+    } finally {
+      routeLoading = false;
+      generateRouteBtn.disabled = !(pointA && pointB);
+      generateRouteBtn.textContent = 'Generate Route';
+      clearRouteBtn.disabled = false;
+      placeStartBtn.disabled = false;
+      placeEndBtn.disabled = false;
+      if (markerA) markerA.setDraggable(true);
+      if (markerB) markerB.setDraggable(true);
+    }
+  });
+
+  clearRouteBtn.addEventListener('click', () => {
+    if (routeLoading) return;
+    resetRoute();
+  });
+
+  // ── Route details popup ──────────────────────────────────────────────────
+  // Click the drawn route line to see its stats in a popup, in addition to
+  // the stats panel above. Layer-filtered listeners are safe to register
+  // now even though 'route-line' doesn't exist until drawRoute() runs —
+  // MapLibre checks whether the layer exists at click time, not here.
+
+  map.on('mouseenter', 'route-line', () => {
     map.getCanvas().style.cursor = 'pointer';
   });
 
-  map.on('mouseleave', ROUTE_LINE_LAYER_ID, () => {
+  map.on('mouseleave', 'route-line', () => {
     map.getCanvas().style.cursor = '';
   });
 
-  map.on('click', ROUTE_LINE_LAYER_ID, event => {
+  map.on('click', 'route-line', e => {
     if (!activeRouteDetails) return;
 
     const { distance_km, estimated_hours, climb_m } = activeRouteDetails;
 
-    if (routePopup) {
-      routePopup.remove();
-    }
+    if (routePopup) routePopup.remove();
 
     routePopup = new maplibregl.Popup()
-      .setLngLat(event.lngLat)
+      .setLngLat(e.lngLat)
       .setHTML(`
         <h3>Route Details</h3>
         <div>Distance: ${distance_km.toFixed(2)} km</div>
@@ -470,43 +456,3 @@ function initialiseRoutePopup() {
       `)
       .addTo(map);
   });
-}
-
-
-// ─────────────────────────────────────────────────────────────────────────
-// Error message
-// ─────────────────────────────────────────────────────────────────────────
-
-function showMapError(message) {
-  const mapContainer = document.getElementById('map');
-
-  if (!mapContainer) return;
-
-  const errorMessage = document.createElement('div');
-
-  errorMessage.textContent = message;
-
-  errorMessage.style.position = 'absolute';
-  errorMessage.style.top = '50%';
-  errorMessage.style.left = '50%';
-  errorMessage.style.transform = 'translate(-50%, -50%)';
-  errorMessage.style.zIndex = '1000';
-  errorMessage.style.maxWidth = '420px';
-  errorMessage.style.padding = '18px';
-  errorMessage.style.border = '1px solid #2a2f2c';
-  errorMessage.style.borderRadius = '10px';
-  errorMessage.style.background = 'rgba(20, 24, 23, 0.95)';
-  errorMessage.style.color = '#e8ede9';
-  errorMessage.style.fontFamily = "'DM Mono', monospace";
-  errorMessage.style.fontSize = '0.8rem';
-  errorMessage.style.lineHeight = '1.5';
-  errorMessage.style.textAlign = 'centre';
-
-  mapContainer.appendChild(errorMessage);
-}
-
-// ─────────────────────────────────────────────────────────────────────────
-// Start RidgeWalker
-// ─────────────────────────────────────────────────────────────────────────
-
-initialiseMap();

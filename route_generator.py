@@ -41,8 +41,11 @@ Dependencies: `pip install requests pillow numpy flask`
 ─────────────────────────────────────────────────────────────────────────
 """
 
+import base64
 import heapq
+import json
 import math
+import os
 import time
 from io import BytesIO
 
@@ -52,12 +55,38 @@ from PIL import Image
 
 # ── Config — identical to terrain_routing.py for a fair, direct comparison ─
 
-LINZ_API_KEY = "d01KKYTQ3K36KWETM4W8J4VMN6S"
-
 ELEVATION_TILE_URL = (
     "https://basemaps.linz.govt.nz/v1/tiles/elevation/WebMercatorQuad/"
     "{z}/{x}/{y}.png?api={key}&pipeline=terrain-rgb"
 )
+
+# Same key-resolution pattern as Lambda_Function.py: env var first, then
+# Secrets Manager, cached across warm invocations. This DEM tile fetch always
+# runs server-side, so a hardcoded key here isn't a browser-exposure risk the
+# way the old MapLogic.js key was — but it was still a plaintext secret
+# committed to source, and it was a second, different LINZ key from the one
+# Lambda_Function.py uses. Pointing both at the same lookup mechanism means
+# one key, one place to rotate it, no stray secret in git history.
+_cached_key = None
+
+
+def get_linz_key():
+    global _cached_key
+    if _cached_key:
+        return _cached_key
+
+    env_key = os.environ.get("LINZ_API_KEY")
+    if env_key:
+        _cached_key = env_key
+        return _cached_key
+
+    import boto3
+    client = boto3.client("secretsmanager")
+    secret_id = os.environ.get("LINZ_SECRET_ID", "ridgewalker/linz-api-key")
+    response = client.get_secret_value(SecretId=secret_id)
+    secret = json.loads(response["SecretString"])
+    _cached_key = secret["LINZ_API_KEY"]
+    return _cached_key
 
 TILE_SIZE = 256
 DEFAULT_TEST_BBOX = (-39.16, 175.60, -39.15, 175.62)  # min_lat, min_lon, max_lat, max_lon
@@ -123,7 +152,10 @@ def tobler_speed_kmh_array(slope: np.ndarray) -> np.ndarray:
 # ── Step 1: fetch and mosaic whatever DEM tiles cover the bbox ─────────────
 
 def fetch_dem_mosaic(bbox: tuple[float, float, float, float], zoom: int,
-                       api_key: str = LINZ_API_KEY):
+                       api_key: str = None):
+    if api_key is None:
+        api_key = get_linz_key()
+
     min_lat, min_lon, max_lat, max_lon = bbox
     x0, y0, _, _ = lonlat_to_tile_and_pixel(min_lon, max_lat, zoom)
     x1, y1, _, _ = lonlat_to_tile_and_pixel(max_lon, min_lat, zoom)
@@ -585,12 +617,77 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
     return app
 
 
-# ── Running the API ─────────────────────────────────────────────────────
+# ── Running the API locally ──────────────────────────────────────────────
 #
-# Start the server:   python3 terrain_routing_v5.py --serve
+# Start the server:   python3 route_generator.py --serve
 #
 # The old CLI test still works unchanged:
-#   python3 terrain_routing_v5.py <lon_a> <lat_a> <lon_b> <lat_b>
+#   python3 route_generator.py <lon_a> <lat_a> <lon_b> <lat_b>
+
+# ── AWS Lambda entry point ──────────────────────────────────────────────
+#
+# create_app() above is Flask, which Lambda can't invoke directly without an
+# adapter like Mangum — this is the actual handler API Gateway calls. Deploy
+# this file as its own Lambda (separate from Lambda_Function.py's tile
+# proxy), with a route such as POST /route on the same or a second API
+# Gateway. Not yet wired up from MapLogic.js — the frontend currently only
+# talks to the tile proxy — so hook a "get route" button up to whatever URL
+# you deploy this as.
+#
+# Heads up on runtime: a NODE_BUDGET of 2,000,000 plus the DEM tile fetches
+# can take several seconds per request (per this file's own Tongariro
+# benchmark, ~8s). Make sure the Lambda's timeout is set well above that
+# (e.g. 30s+), and increase memory too — NumPy on Lambda's default 128MB
+# will be very slow or OOM.
+
+CORS_HEADERS = {
+    "Access-Control-Allow-Origin": os.environ.get("ALLOWED_ORIGIN", "*"),
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+}
+
+
+def lambda_handler(event, context):
+    method = (
+        event.get("requestContext", {}).get("http", {}).get("method")
+        or event.get("httpMethod")
+        or "GET"
+    )
+
+    if method == "OPTIONS":
+        return {"statusCode": 204, "headers": CORS_HEADERS, "body": ""}
+
+    try:
+        raw_body = event.get("body") or "{}"
+        if event.get("isBase64Encoded"):
+            raw_body = base64.b64decode(raw_body).decode("utf-8")
+        payload = json.loads(raw_body)
+
+        waypoint_a = tuple(payload["a"])
+        waypoint_b = tuple(payload["b"])
+        node_budget = int(payload.get("node_budget", DEFAULT_NODE_BUDGET))
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+        return {
+            "statusCode": 400,
+            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "body": json.dumps({"ok": False, "error": f"Bad request: {e}"}),
+        }
+
+    try:
+        result = route_any_two_points(waypoint_a, waypoint_b, node_budget=node_budget)
+    except Exception as e:
+        return {
+            "statusCode": 500,
+            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "body": json.dumps({"ok": False, "error": f"Routing failed: {e}"}),
+        }
+
+    return {
+        "statusCode": 200 if result.get("ok") else 400,
+        "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+        "body": json.dumps(result),
+    }
+
 
 if __name__ == "__main__":
     import argparse
