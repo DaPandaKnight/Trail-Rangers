@@ -37,7 +37,7 @@ this version doesn't land on essentially the same numbers, that's a bug
 in this rewrite, not a "different but valid" result — investigate before
 trusting it.
 
-Dependencies: `pip install requests pillow numpy`
+Dependencies: `pip install requests pillow numpy flask`
 ─────────────────────────────────────────────────────────────────────────
 """
 
@@ -595,6 +595,17 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
 
     app = Flask(__name__)
 
+    # The frontend runs on a different origin/port than this server, so the
+    # browser blocks the request unless these headers explicitly allow it.
+    # Flask's automatic OPTIONS response (for the CORS preflight) also passes
+    # through after_request, so no separate OPTIONS handler is needed.
+    @app.after_request
+    def add_cors_headers(response):
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS"
+        response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return response
+
     @app.route("/route", methods=["POST"])
     def route():
         body = request.get_json(force=True)
@@ -605,6 +616,13 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
 
     return app
 
+
+# ── Running the API locally ──────────────────────────────────────────────
+#
+# Start the server:   python3 route_generator.py --serve
+#
+# The old CLI test still works unchanged:
+#   python3 route_generator.py <lon_a> <lat_a> <lon_b> <lat_b>
 
 # ── AWS Lambda entry point ──────────────────────────────────────────────
 #
@@ -679,16 +697,28 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Route between two points anywhere in NZ using terrain-cost pathfinding."
     )
-    parser.add_argument("lon_a", type=float, help="Longitude of waypoint A")
-    parser.add_argument("lat_a", type=float, help="Latitude of waypoint A")
-    parser.add_argument("lon_b", type=float, help="Longitude of waypoint B")
-    parser.add_argument("lat_b", type=float, help="Latitude of waypoint B")
+    parser.add_argument("lon_a", type=float, nargs="?", help="Longitude of waypoint A")
+    parser.add_argument("lat_a", type=float, nargs="?", help="Latitude of waypoint A")
+    parser.add_argument("lon_b", type=float, nargs="?", help="Longitude of waypoint B")
+    parser.add_argument("lat_b", type=float, nargs="?", help="Latitude of waypoint B")
     parser.add_argument("--node-budget", type=int, default=DEFAULT_NODE_BUDGET,
                          help=f"Max grid nodes to build (default {DEFAULT_NODE_BUDGET})")
     parser.add_argument("--out", type=str, default="terrain_route.geojson",
                          help="Output GeoJSON file path (default terrain_route.geojson)")
+    parser.add_argument("--serve", action="store_true",
+                         help="Start the Flask /route API server instead of running a one-off CLI route")
+    parser.add_argument("--port", type=int, default=5050,
+                         help="Port to listen on with --serve (default 5050 — avoid 5000, "
+                              "which macOS AirPlay Receiver occupies by default)")
 
     args = parser.parse_args()
+
+    if args.serve:
+        create_app(node_budget=args.node_budget).run(port=args.port)
+        sys.exit(0)
+
+    if None in (args.lon_a, args.lat_a, args.lon_b, args.lat_b):
+        parser.error("lon_a, lat_a, lon_b, lat_b are required unless --serve is given.")
 
     waypoint_a = (args.lon_a, args.lat_a)
     waypoint_b = (args.lon_b, args.lat_b)

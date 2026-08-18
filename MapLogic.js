@@ -188,6 +188,10 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
   let markerB = null;
   let routeLoading = false;
 
+  // Stats for whichever route is currently drawn, read by the click popup.
+  let activeRouteDetails = null;
+  let routePopup = null;
+
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
@@ -281,6 +285,9 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
     if (markerB) { markerB.remove(); markerB = null; }
 
     clearRouteLine();
+
+    activeRouteDetails = null;
+    if (routePopup) { routePopup.remove(); routePopup = null; }
 
     pointADotEl.classList.remove('is-set');
     pointBDotEl.classList.remove('is-set');
@@ -381,6 +388,12 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
 
       drawRoute(data.route);
 
+      activeRouteDetails = {
+        distance_km: data.distance_km,
+        estimated_hours: data.estimated_hours,
+        climb_m: data.climb_m
+      };
+
       statDistanceEl.textContent = `${data.distance_km.toFixed(2)} km`;
       statTimeEl.textContent = formatDuration(data.estimated_hours);
       statClimbEl.textContent = `${Math.round(data.climb_m)} m`;
@@ -410,4 +423,36 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
   clearRouteBtn.addEventListener('click', () => {
     if (routeLoading) return;
     resetRoute();
+  });
+
+  // ── Route details popup ──────────────────────────────────────────────────
+  // Click the drawn route line to see its stats in a popup, in addition to
+  // the stats panel above. Layer-filtered listeners are safe to register
+  // now even though 'route-line' doesn't exist until drawRoute() runs —
+  // MapLibre checks whether the layer exists at click time, not here.
+
+  map.on('mouseenter', 'route-line', () => {
+    map.getCanvas().style.cursor = 'pointer';
+  });
+
+  map.on('mouseleave', 'route-line', () => {
+    map.getCanvas().style.cursor = '';
+  });
+
+  map.on('click', 'route-line', e => {
+    if (!activeRouteDetails) return;
+
+    const { distance_km, estimated_hours, climb_m } = activeRouteDetails;
+
+    if (routePopup) routePopup.remove();
+
+    routePopup = new maplibregl.Popup()
+      .setLngLat(e.lngLat)
+      .setHTML(`
+        <h3>Route Details</h3>
+        <div>Distance: ${distance_km.toFixed(2)} km</div>
+        <div>Est. time: ${formatDuration(estimated_hours)}</div>
+        <div>Climb: ${Math.round(climb_m)} m</div>
+      `)
+      .addTo(map);
   });
