@@ -1,7 +1,24 @@
+/* ============================================================
+   RidgeWalker — Main Stylesheet
+   ------------------------------------------------------------
+   Controls the full-screen map, floating route panel,
+   MapLibre popups, route controls, and responsive layouts.
+   ============================================================ */
+
+
+/* Google Fonts used by the RidgeWalker interface */
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* Use predictable sizing and remove default browser spacing. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
 
+/* Shared colours and sizing value used throughout the UI */
 :root {
   --bg:       #1c1a16;
   --panel:    #26231d;
@@ -14,10 +31,36 @@
   --navbar-height: 64px;
 }
 
-html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow: hidden; }
+/* Fill the visible browser area and prevent page-level scrolling. */
+html, 
+body { 
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Mono', monospace;
+}
 
-/* ── Map ── */
-#map { position: fixed; inset: 0; }
+/* ============================================================
+   2. Map Canvas
+   ============================================================ */
+
+
+/* MapLibre fills the entire viewport behind the interface. */
+#map { 
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+}
+
+
+/* ============================================================
+   3. Main Control Panel
+   ============================================================ */
 
 /* ── Navbar ── */
 .navbar {
@@ -67,14 +110,20 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   gap: 18px;
 }
 
+/* Small uppercase headings used to separate panel sections. */
 .panel-section-label {
   font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase;
   color: var(--muted); margin-bottom: 12px;
 }
 
-/* Layer toggles */
+/* ============================================================
+   5. Map Layer Controls
+   ============================================================ */
+
+   /* Row containing a layer name and its on/off switch. */
 .layer-row {
-  display: flex; align-items: center;
+  display: flex; 
+  align-items: center;
   gap: 8px;
 }
 .layer-name { font-size: 1rem; color: var(--text); min-width: 150px; }
@@ -92,6 +141,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   background: var(--border); border-radius: 28px;
   transition: background 0.2s;
 }
+
+/* Circular switch handle. */
 .toggle-slider::before {
   content: ''; position: absolute;
   width: 22px; height: 22px; left: 3px; top: 3px;
@@ -101,15 +152,23 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .toggle input:checked + .toggle-slider { background: color-mix(in srgb, var(--accent) 30%, var(--border)); }
 .toggle input:checked + .toggle-slider::before { transform: translateX(24px); background: var(--accent); }
 
+
+/* ============================================================
+   7. Topographic Opacity Slider
+   ============================================================ */
+
 /* Opacity slider */
 .opacity-row { display: flex; flex-direction: column; gap: 8px; }
 .opacity-header { display: flex; justify-content: space-between; align-items: center; }
 .opacity-val { font-size: 0.95rem; color: var(--accent); }
 
+/* Base range slider styling. */
 input[type=range] {
   appearance: none; -webkit-appearance: none; width: 100%; height: 7px;
   background: var(--border); border-radius: 4px; outline: none; cursor: pointer;
 }
+
+/* Slider thumb for Chrome, Edge, and Safari. */
 input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; width: 22px; height: 22px;
   border-radius: 50%; background: var(--accent);
@@ -127,22 +186,54 @@ input[type=range]::-webkit-slider-thumb {
 .route-points { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
 .route-point-row { display: flex; align-items: center; gap: 10px; }
 
+/* Empty route-point indicator before a coordinate is selected. */
 .point-dot {
   width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
   background: transparent;
   border: 1.5px solid var(--border);
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.point-dot-start.is-set { background: var(--accent);  border-color: var(--accent);  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
-.point-dot-end.is-set   { background: var(--accent2); border-color: var(--accent2); box-shadow: 0 0 6px color-mix(in srgb, var(--accent2) 70%, transparent); }
 
-.point-label { font-size: 0.92rem; color: var(--muted); min-width: 42px; }
-.point-coords { font-size: 0.92rem; color: var(--muted); flex: 1; text-align: right; transition: color 0.15s; }
-.point-coords.is-set { color: var(--text); }
+/* Orange indicates the selected start point. */
+.point-dot-start.is-set { 
+  background: var(--accent);  
+  border-color: var(--accent);  
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); 
+}
 
-.route-actions { display: flex; gap: 14px; margin-bottom: 14px; }
-.route-actions:last-of-type { margin-bottom: 0; }
+/* Blue indicates the selected end point. */
+.point-dot-end.is-set   { 
+  background: var(--accent2); 
+  border-color: var(--accent2); 
+  box-shadow: 0 0 6px color-mix(in srgb, var(--accent2) 70%, transparent); 
+}
 
+.point-label { 
+  font-size: 0.72rem; 
+  color: var(--muted); 
+  min-width: 34px; 
+}
+
+.point-coords { 
+  font-size: 0.72rem; 
+  color: var(--muted); 
+  flex: 1; 
+  text-align: right; 
+  transition: color 0.15s; 
+}
+
+/* Selected coordinates become brighter for readability. */
+.point-coords.is-set { 
+  color: var(--text); 
+}
+
+/* Row containing route action buttons. */
+.route-actions { 
+  display: flex; 
+  gap: 8px;
+}
+
+/* Shared styles for primary and secondary buttons. */
 .btn-primary, .btn-secondary {
   flex: 1;
   min-height: 48px;
@@ -156,30 +247,70 @@ input[type=range]::-webkit-slider-thumb {
   transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
 }
 
+/* Main route-generation action. */
 .btn-primary {
   background: var(--accent);
   color: #14100a;
   border: 1px solid var(--accent);
 }
+
 .btn-primary:hover:not(:disabled) {
   box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 50%, transparent);
 }
-.btn-primary:disabled { background: var(--border); border-color: var(--border); color: var(--muted); cursor: not-allowed; }
 
+.btn-primary:disabled {
+   background: var(--border); 
+   border-color: var(--border); 
+   color: var(--muted); 
+   cursor: not-allowed; 
+}
+
+/* Secondary actions such as choosing or clearing points. */
 .btn-secondary {
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
 }
-.btn-secondary:hover:not(:disabled) { background: var(--border); border-color: var(--accent2); color: var(--accent2); }
-.btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
 
-.btn-start { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
-.btn-start:hover:not(:disabled) { background: var(--border); border-color: var(--accent); color: var(--accent); }
+.btn-secondary:hover:not(:disabled) { 
+  background: var(--border); 
+  border-color: var(--accent2);
+  color: var(--accent2); 
+}
 
-.btn-end { border-color: color-mix(in srgb, var(--accent2) 45%, var(--border)); }
-.btn-end:hover:not(:disabled) { background: var(--border); border-color: var(--accent2); color: var(--accent2); }
+.btn-secondary:disabled { 
+  opacity: 0.4; 
+  cursor: not-allowed; 
+}
 
+/* Start-point button uses the orange route colour. */
+.btn-start { 
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); 
+}
+
+.btn-start:hover:not(:disabled) { 
+  background: var(--border); 
+  border-color: var(--accent); 
+  color: var(--accent); 
+}
+
+/* End-point button uses the blue route colour. */
+.btn-end { 
+  border-color: color-mix(in srgb, var(--accent2) 45%, var(--border)); 
+}
+
+
+.btn-end:hover:not(:disabled) { 
+  background: var(--border); 
+  border-color: var(--accent2); 
+  color: var(--accent2); 
+}
+
+/* ============================================================
+   9. Route Statistics and Errors
+   ============================================================ */
+
+   /* Container for distance, elevation, time, and other route results. */
 .route-stats {
   display: flex; flex-direction: column; gap: 10px;
   margin-top: 10px; padding-top: 10px;
@@ -192,6 +323,13 @@ input[type=range]::-webkit-slider-thumb {
 }
 .route-stat-value { font-size: 1rem; font-weight: 500; color: var(--accent2); }
 
+.route-stat-value { 
+  font-size: 0.76rem; 
+  font-weight: 500; 
+  color: var(--accent2); 
+}
+
+/* Error message displayed when route generation fails. */
 .route-error {
   margin-top: 10px;
   padding: 12px 14px;
@@ -212,9 +350,20 @@ input[type=range]::-webkit-slider-thumb {
   border: 1px solid var(--border); border-radius: 6px;
   cursor: pointer; transition: background 0.15s, border-color 0.15s;
 }
-.zoom-btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
 
-/* Coordinates Box */
+.zoom-btn:hover { 
+  background: var(--border); 
+  border-color: var(--accent); 
+  color: var(--accent); 
+}
+
+
+/* ============================================================
+   11. Live Coordinate Display
+   ============================================================ */
+
+
+/* Floating pill showing the current map coordinates. */
 .coord-display {
   position: fixed;
   bottom: 2%;
@@ -235,14 +384,27 @@ input[type=range]::-webkit-slider-thumb {
   pointer-events: none;
 }
 
-/* Attribution */
+/* ============================================================
+   12. Map Attribution
+   ============================================================ */
 .map-attr {
-  position: fixed; bottom: 4px; right: 8px; z-index: 10;
-  font-size: 0.6rem; color: var(--muted);
+  position: fixed; 
+  bottom: 4px; 
+  right: 8px; 
+  z-index: 10;
+  font-size: 0.6rem; 
+  color: var(--muted);
 }
-.map-attr a { color: var(--muted); }
+.map-attr a { 
+  color: var(--muted);
+}
 
-/* Route popup (MapLibre) */
+/* ============================================================
+   13. MapLibre Route Popup
+   ============================================================ */
+
+   
+/* Keep route popups above the main interface. */ 
 .maplibregl-popup {
   z-index: 20;
 }
@@ -260,6 +422,7 @@ input[type=range]::-webkit-slider-thumb {
   box-shadow: 0 4px 20px rgba(0,0,0,0.45);
 }
 
+/* Headings inside route information popups. */
 .maplibregl-popup-content h1,
 .maplibregl-popup-content h2,
 .maplibregl-popup-content h3 {
@@ -271,16 +434,19 @@ input[type=range]::-webkit-slider-thumb {
   margin-bottom: 8px;
 }
 
+/*Popup close button */
 .maplibregl-popup-close-button {
   color: var(--muted);
   font-size: 1rem;
   padding: 4px 8px;
 }
+
 .maplibregl-popup-close-button:hover {
   color: var(--accent);
   background: transparent;
 }
 
+/* Match each popup arrow to the panel background. */
 .maplibregl-popup-anchor-top .maplibregl-popup-tip,
 .maplibregl-popup-anchor-top-left .maplibregl-popup-tip,
 .maplibregl-popup-anchor-top-right .maplibregl-popup-tip {
@@ -301,10 +467,22 @@ input[type=range]::-webkit-slider-thumb {
   border-left-color: var(--panel);
 }
 
+/* ============================================================
+   14. Accessibility
+   ============================================================ */
 
-/* ─────────────────────────────────────────
-   Responsive and mobile improvements
-───────────────────────────────────────── */
+/* Visible keyboard focus for interactive controls. */
+button:focus-visible,
+input:focus-visible,
+label:focus-visible,
+.toggle:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+}
+
+/* ============================================================
+   14. Accessibility
+   ============================================================ */
 
 /* Better handling of mobile browser toolbars */
 html,
@@ -314,12 +492,9 @@ body {
   height: 100dvh;
 }
 
-/* Ensure the map always fills the visible screen */
-#map {
-  width: 100%;
-  height: 100%;
-  height: 100dvh;
-}
+/* ============================================================
+   15. Tablet and Mobile Layout — 768px and Below
+   ============================================================ */
 
 /* Prevent the desktop panel exceeding shorter screens */
 #panel {
@@ -350,21 +525,19 @@ label:focus-visible,
 
 /* ── Tablet and mobile ── */
 @media (max-width: 768px) {
+  /* Move the desktop side panel to the bottom of the screen. */
   #panel {
     top: auto;
-    left: 10px;
     right: 10px;
     bottom: 46px;
+    left: 10px;
 
-    width: 100%;
+    width: auto;
     max-height: 40dvh;
     padding: 14px;
-
-    border-radius: 14px;
     gap: 12px;
 
-    /* Allows the panel to scroll without moving the map */
-    overflow-y: auto;
+    border-radius: 14px;
     -webkit-overflow-scrolling: touch;
   }
 
@@ -377,15 +550,15 @@ label:focus-visible,
     height: 30px;
   }
 
-  /* Make layer controls easier to tap */
+  /* Increase touch targets for map layer controls. */
   .layer-row {
     min-height: 44px;
     justify-content: space-between;
   }
 
   .layer-name {
-    min-width: 0;
     flex: 1;
+    min-width: 0;
     font-size: 0.72rem;
   }
 
@@ -403,55 +576,61 @@ label:focus-visible,
     transform: translateX(20px);
   }
 
-  /* Larger slider touch area */
-  input[type="range"] {
+  /* Increase the slider's touch area on small screens. */
+  input[type='range'] {
     height: 6px;
     margin-block: 8px;
   }
 
-  input[type="range"]::-webkit-slider-thumb {
+  input[type='range']::-webkit-slider-thumb {
     width: 22px;
     height: 22px;
   }
 
-  input[type="range"]::-moz-range-thumb {
+  input[type='range']::-moz-range-thumb {
     width: 22px;
     height: 22px;
+    background: var(--accent);
     border: 0;
     border-radius: 50%;
-    background: var(--accent);
   }
 
-  /* Larger zoom controls */
+  /* Larger touch targets for map zoom controls. */
   .zoom-btn {
     min-height: 44px;
     padding: 10px 0;
     font-size: 1.1rem;
   }
 
-  /* Larger route controls */
-  .btn-primary, .btn-secondary {
+  /* Larger route-action buttons for touch devices. */
+  .btn-primary,
+  .btn-secondary {
     min-height: 44px;
     font-size: 0.78rem;
   }
 
-  .point-label, .point-coords { font-size: 0.76rem; }
+  .point-label,
+  .point-coords {
+    font-size: 0.76rem;
+  }
 
-  .route-hint { font-size: 0.74rem; }
+  .route-hint {
+    font-size: 0.74rem;
+  }
 
-  /* Keep coordinates above the panel */
+  /* Keep the coordinate pill visible above the bottom panel. */
   .coord-display {
     left: 50%;
     bottom: calc(43dvh + 58px);
     max-width: calc(100vw - 24px);
     padding: 7px 14px;
     overflow: hidden;
-    text-overflow: ellipsis;
-
     font-size: 0.62rem;
     letter-spacing: 0.04em;
+    text-overflow: ellipsis;
   }
 
+  /* Keep attribution readable without covering controls. */
   .map-attr {
     right: 6px;
     bottom: 3px;
@@ -461,13 +640,16 @@ label:focus-visible,
   }
 }
 
-/* ── Small phones ── */
+
+/* ============================================================
+   16. Small Phones — 480px and Below
+   ============================================================ */
+
 @media (max-width: 480px) {
   #panel {
-    left: 8px;
     right: 8px;
     bottom: 38px;
-
+    left: 8px;
     max-height: 46dvh;
     padding: 12px;
     gap: 10px;
@@ -488,7 +670,11 @@ label:focus-visible,
   }
 }
 
-/* ── Landscape phones ── */
+
+/* ============================================================
+   17. Landscape Phones
+   ============================================================ */
+
 @media (max-height: 500px) and (orientation: landscape) {
   .navbar {
     height: 40px;
@@ -503,33 +689,36 @@ label:focus-visible,
     top: 48px;
     bottom: 8px;
     left: 8px;
-    right: auto;
-
     width: min(260px, 42vw);
     max-height: none;
   }
 
   .coord-display {
+    right: 12px;
     bottom: 20px;
     left: calc(42vw + 30px);
-    right: 12px;
-    transform: none;
     max-width: none;
+    transform: none;
     text-align: center;
   }
 }
 
-/* Remove hover-only behaviour on touch devices */
+
+/* ============================================================
+   18. Touch Devices
+   ============================================================ */
+
+/* Avoid relying on hover effects where a mouse pointer is absent. */
 @media (hover: none) {
   .zoom-btn:hover {
     background: var(--panel);
-    border-color: var(--border);
     color: var(--text);
+    border-color: var(--border);
   }
 
   .zoom-btn:active {
     background: var(--border);
-    border-color: var(--accent);
     color: var(--accent);
+    border-color: var(--accent);
   }
 }
