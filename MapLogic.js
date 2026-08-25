@@ -355,7 +355,8 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
     routeHintEl.textContent = 'Crunching terrain data — this can take up to 30 seconds for longer routes.';
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // times out after 130 secs 
+    const timeoutId = setTimeout(() => controller.abort(), 120000); 
 
     try {
       const resp = await fetch(ROUTE_API_URL, {
