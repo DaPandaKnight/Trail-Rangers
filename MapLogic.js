@@ -1,6 +1,6 @@
 // ── CONFIG ───────────────────────────────────────────────────────────────
   // No LINZ key here anymore — it lives server-side in Secrets Manager.
-  const API_BASE = 'https://k3w7aj90ok.execute-api.ap-southeast-2.amazonaws.com';
+  const API_BASE = 'https://n2jlhbeb2jdxav7cdb6eyn7jze0tgbqm.lambda-url.ap-southeast-2.on.aws/';
   const LINZ_ORIGIN = 'https://basemaps.linz.govt.nz/v1/';
   // ─────────────────────────────────────────────────────────────────────────
 
