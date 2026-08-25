@@ -3,13 +3,14 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:       #1c1a16;
-  --panel:    #26231d;
-  --border:   #453f34;
-  --accent:   #ff8400;
-  --accent2:  #2fd4a0;
-  --text:     #f0ece2;
-  --muted:    #9b9284;
+  --bg:       #f1ebdd;
+  --panel:    #faf7f0;
+  --panel-rgb: 250, 247, 240;
+  --border:   #ddd2b8;
+  --accent:   #e2660a;
+  --accent2:  #178f66;
+  --text:     #2b2620;
+  --muted:    #7a7266;
   --radius:   10px;
   --navbar-height: 64px;
 }
@@ -32,14 +33,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   align-items: center;
   gap: 12px;
   padding: 0 20px;
-  background: rgba(38, 35, 29, 0.9);
+  background: rgba(var(--panel-rgb), 0.9);
   backdrop-filter: blur(16px);
   border-bottom: 1px solid var(--border);
-}
-.navbar-logo {
-  height: 40px;
-  width: auto;
-  display: block;
 }
 .navbar-title {
   font-family: 'Syne', sans-serif;
@@ -56,7 +52,8 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 #panel {
   position: fixed; top: calc(var(--navbar-height) + 16px); bottom: 16px; left: 16px; z-index: 10;
   width: 300px;
-  background: rgba(38, 35, 29,0.92);
+  background: rgba(var(--panel-rgb), 0.92);
+  box-shadow: 0 8px 28px rgba(80, 60, 30, 0.1);
   backdrop-filter: blur(16px);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -195,10 +192,10 @@ input[type=range]::-webkit-slider-thumb {
 .route-error {
   margin-top: 10px;
   padding: 12px 14px;
-  border: 1px solid color-mix(in srgb, #ff5c5c 50%, var(--border));
+  border: 1px solid color-mix(in srgb, #d13c3c 50%, var(--border));
   border-radius: 6px;
-  background: color-mix(in srgb, #ff5c5c 10%, transparent);
-  color: #ff8a8a;
+  background: color-mix(in srgb, #d13c3c 10%, transparent);
+  color: #a82727;
   font-size: 0.85rem;
   line-height: 1.4;
 }
@@ -221,7 +218,7 @@ input[type=range]::-webkit-slider-thumb {
   left: calc(50% + 158px);
   transform: translateX(-50%);
   z-index: 10;
-  background: rgba(38, 35, 29, 0.88);
+  background: rgba(var(--panel-rgb), 0.88);
   backdrop-filter: blur(14px);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -231,7 +228,7 @@ input[type=range]::-webkit-slider-thumb {
   letter-spacing: 0.08em;
   color: var(--accent);
   white-space: nowrap;
-  box-shadow: 0 2px 16px rgba(0,0,0,0.4), 0 0 0 1px rgba(47,212,160,0.08);
+  box-shadow: 0 2px 16px rgba(80, 60, 30, 0.12), 0 0 0 1px rgba(23, 143, 102, 0.08);
   pointer-events: none;
 }
 
@@ -248,7 +245,7 @@ input[type=range]::-webkit-slider-thumb {
 }
 
 .maplibregl-popup-content {
-  background: rgba(38, 35, 29, 0.96);
+  background: rgba(var(--panel-rgb), 0.96);
   backdrop-filter: blur(16px);
   color: var(--text);
   border: 1px solid var(--border);
@@ -257,7 +254,7 @@ input[type=range]::-webkit-slider-thumb {
   font-family: 'DM Mono', monospace;
   font-size: 0.78rem;
   line-height: 1.5;
-  box-shadow: 0 4px 20px rgba(0,0,0,0.45);
+  box-shadow: 0 4px 20px rgba(80, 60, 30, 0.14);
 }
 
 .maplibregl-popup-content h1,
@@ -373,10 +370,6 @@ label:focus-visible,
     padding: 0 14px;
   }
 
-  .navbar-logo {
-    height: 30px;
-  }
-
   /* Make layer controls easier to tap */
   .layer-row {
     min-height: 44px;
@@ -478,10 +471,6 @@ label:focus-visible,
     font-size: 0.56rem;
   }
 
-  .navbar-logo {
-    height: 26px;
-  }
-
   .coord-display {
     bottom: calc(46dvh + 50px);
     font-size: 0.58rem;
@@ -493,10 +482,6 @@ label:focus-visible,
   .navbar {
     height: 40px;
     padding: 0 12px;
-  }
-
-  .navbar-logo {
-    height: 24px;
   }
 
   #panel {
