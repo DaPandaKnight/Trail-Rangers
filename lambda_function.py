@@ -8,25 +8,33 @@ API Gateway route:
 GET /proxy/{proxy+}
 """
 
-import os
-import json
 import base64
-import urllib.request
+import json
+import os
 import urllib.error
 import urllib.parse
+import urllib.request
 
 
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
+
+# LINZ basemap API
 LINZ_BASE = "https://basemaps.linz.govt.nz/v1"
 
-# "*" allows both the deployed website and localhost during marking.
+
+# "*" supports both the deployed website and localhost during development.
 ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "*")
 
+# Headers used for browser requests.
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
     "Access-Control-Allow-Methods": "GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
 }
 
+## Cache the LINZ API key between Lambda invocations.
 _cached_key = None
 
 
@@ -47,19 +55,22 @@ def get_linz_key():
     import boto3
 
     client = boto3.client("secretsmanager")
+
     secret_id = os.environ.get(
         "LINZ_SECRET_ID",
-        "ridgewalker/linz-api-key"
+        "ridgewalker/linz-api-key",
     )
 
     response = client.get_secret_value(SecretId=secret_id)
     secret = json.loads(response["SecretString"])
 
     _cached_key = secret["LINZ_API_KEY"]
+
     return _cached_key
 
 
 def _fetch(url):
+    """Request data from LINZ."""
     request = urllib.request.Request(
         url,
         headers={"User-Agent": "RidgeWalker-Proxy/1.0"}
@@ -74,6 +85,8 @@ def _fetch(url):
 
 
 def lambda_handler(event, context):
+    """Handle requests from API Gateway."""
+
     # Supports both HTTP API v2 and REST API v1 event formats.
     method = (
         event.get("requestContext", {})
@@ -83,6 +96,7 @@ def lambda_handler(event, context):
         or "GET"
     )
 
+    # Handle browser CORS preflight requests.
     if method == "OPTIONS":
         return {
             "statusCode": 204,
@@ -93,6 +107,7 @@ def lambda_handler(event, context):
     try:
         key = get_linz_key()
 
+         # Get the requested path from API Gateway.
         raw_path = event.get("rawPath") or event.get("path", "")
 
         if "/proxy/" not in raw_path:
@@ -110,6 +125,7 @@ def lambda_handler(event, context):
             safe="/"
         )
 
+        # Retrieve the query string.
         query_string = event.get("rawQueryString", "")
 
         # REST API v1 fallback.
@@ -119,6 +135,7 @@ def lambda_handler(event, context):
             )
             query_string = urllib.parse.urlencode(query_parameters)
 
+        # Add the LINZ API key to the request.
         joiner = "&" if query_string else ""
 
         url = (
@@ -148,6 +165,7 @@ def lambda_handler(event, context):
             "body": f"Proxy error: {error}"
         }
 
+    # Convert LINZ headers to lowercase for easier lookup.
     headers_ci = {
         name.lower(): value
         for name, value in upstream_headers.items()
@@ -158,6 +176,7 @@ def lambda_handler(event, context):
         "application/octet-stream"
     )
 
+    # Handle JSON responses.
     if "json" in content_type.lower():
         text = body.decode("utf-8")
 
@@ -179,6 +198,7 @@ def lambda_handler(event, context):
             "body": text
         }
 
+    # Handle binary responses such as map tiles.
     response_headers = {
         **CORS_HEADERS,
         "Content-Type": content_type,

@@ -4,11 +4,10 @@
   const LINZ_ORIGIN = 'https://basemaps.linz.govt.nz/v1/';
   // ─────────────────────────────────────────────────────────────────────────
 
-  // Route lambda — deployed separately from the tile proxy (see
-  // route-generator.py). Assumed here to be wired up as a second route
-  // on the SAME API Gateway as the tile proxy. If you deploy it as its
-  // own API Gateway instead, update this URL to match.
-  const ROUTE_API_URL = `https://2azkao04yb.execute-api.ap-southeast-2.amazonaws.com/route`;
+  // Route lambda — now served via its own Lambda Function URL instead of
+  // API Gateway, since API Gateway's HTTP API integration timeout is
+  // capped at 30s and can't be raised, which was cutting off longer routes.
+  const ROUTE_API_URL = 'https://n2jlhbeb2jdxav7cdb6eyn7jze0tgbqm.lambda-url.ap-southeast-2.on.aws/';
 
   const AERIAL_URL =
     `${API_BASE}/proxy/tiles/aerial/WebMercatorQuad/{z}/{x}/{y}.webp`;
@@ -356,7 +355,8 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
     routeHintEl.textContent = 'Crunching terrain data — this can take up to 30 seconds for longer routes.';
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 45000);
+    // times out after 130 secs 
+    const timeoutId = setTimeout(() => controller.abort(), 120000); 
 
     try {
       const resp = await fetch(ROUTE_API_URL, {
