@@ -342,14 +342,19 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
   generateRouteBtn.addEventListener('click', async () => {
     if (!pointA || !pointB || routeLoading) return;
 
+    // Show full-screen loading screen
+    showLoadingScreen();
+
     routeLoading = true;
     generateRouteBtn.disabled = true;
     generateRouteBtn.textContent = 'Calculating…';
     clearRouteBtn.disabled = true;
     placeStartBtn.disabled = true;
     placeEndBtn.disabled = true;
+    
     if (markerA) markerA.setDraggable(false);
     if (markerB) markerB.setDraggable(false);
+    
     routeErrorEl.hidden = true;
     routeStatsEl.hidden = true;
     routeHintEl.textContent = 'Crunching terrain data — this can take up to 30 seconds for longer routes.';
@@ -396,12 +401,19 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
       routeErrorEl.hidden = false;
       routeHintEl.textContent = 'Ready — hit Generate Route to try again.';
     } finally {
+
+      // Hide loading screen when Lambda finishes OR fails
+      hideLoadingScreen();
+
       routeLoading = false;
+      
       generateRouteBtn.disabled = !(pointA && pointB);
       generateRouteBtn.textContent = 'Generate Route';
+      
       clearRouteBtn.disabled = false;
       placeStartBtn.disabled = false;
       placeEndBtn.disabled = false;
+      
       if (markerA) markerA.setDraggable(true);
       if (markerB) markerB.setDraggable(true);
     }
@@ -411,3 +423,14 @@ if (typeof maplibregl.setMaxParallelImageRequests === 'function') {
     if (routeLoading) return;
     resetRoute();
   });
+
+
+  // Show the loading screen
+function showLoadingScreen() {
+    document.getElementById("loading-screen").style.display = "flex";
+}
+
+// Hide the loading screen
+function hideLoadingScreen() {
+    document.getElementById("loading-screen").style.display = "none";
+}
