@@ -19,16 +19,16 @@
 <body>
 
 
+  <!-- Navbar title -->
+  <header class="navbar">
+    <span class="navbar-title">Ridge<span class="navbar-title-accent">Walker</span></span>
+  </header>
 
   <div class="coord-display" id="coords">Move cursor over map to show coordinates</div>
 
   <div id="map"></div>
 
   <div id="panel">
-
-    <div class="logo-container">
-      <img src="RidgeWalker.png" class="panel-logo" />
-    </div>
 
     <div>
       <div class="panel-section-label">Base Layer</div>
@@ -80,8 +80,8 @@
       </div>
 
       <div class="route-actions">
-        <button class="btn-secondary btn-start" id="place-start">Drop Start Pin</button>
-        <button class="btn-secondary btn-end" id="place-end">Drop End Pin</button>
+        <button class="btn-secondary btn-start" id="place-start">Start Pin</button>
+        <button class="btn-secondary btn-end" id="place-end">End Pin</button>
       </div>
 
       <div class="route-actions">
@@ -115,10 +115,28 @@
       </div>
     </div>
 
+    <button id="export-gpx" >
+      Export GPX
+    </button>
+
+  </div>
+
+  <!-- RidgeWalker Loading Screen -->
+  <div id="loading-screen">
+    <div class="loading-content">
+
+      <div class="loader"></div>
+
+      <h2>Finding your route...</h2>
+
+      <p>
+        RidgeWalker is analysing the terrain.
+      </p>
+
+    </div>
   </div>
 
   <script src="MapLogic.js" defer></script>
 </body>
 
 </html>
-
