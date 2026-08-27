@@ -9,7 +9,7 @@ const LINZ_ORIGIN =
 
 // Route generation Lambda Function URL
 const ROUTE_API_URL =
-  'https://n2jlhbeb2jdxav7cdb6eyn7jze0tgbqm.lambda-url.ap-southeast-2.on.aws/';
+  'https://5ppc3q6n5l2575pollyhodeysm0skake.lambda-url.ap-southeast-2.on.aws/';
 
 
 // ── LINZ MAP URLS ────────────────────────────────────────────────────────
