@@ -404,7 +404,7 @@ document
   let markerB = null;
   let routeLoading = false;
 
-  let currentGPX = null;
+
 
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
@@ -518,13 +518,6 @@ function invalidateRoute() {
   routeErrorEl.hidden =
     true;
 
-  currentGPX = null;
-
-  if (exportGPXBtn) {
-
-    exportGPXBtn.disabled =
-      true;
-  }
 }
 
 
@@ -806,8 +799,6 @@ function resetRoute() {
 
   generateRouteBtn.disabled =
     true;
-
-   currentGPX = null;
 
   if (exportGPXBtn) {
 
@@ -1165,7 +1156,6 @@ generateRouteBtn.addEventListener(
 
       let data;
 
-
       try {
 
         data =
@@ -1194,11 +1184,7 @@ generateRouteBtn.addEventListener(
         );
       }
 
-      currentGPX = data.gpx || null;
-
-      if (exportGPXBtn) {
-        exportGPXBtn.disabled = !currentGPX;
-      }
+    
 
 
       // ------------------------------------------------
@@ -1242,16 +1228,6 @@ generateRouteBtn.addEventListener(
       clearTimeout(
         timeoutId
       );
-
-
-      currentGPX = null;
-
-
-      if (exportGPXBtn) {
-
-        exportGPXBtn.disabled =
-          true;
-      }
 
 
       const message =
@@ -1338,35 +1314,6 @@ generateRouteBtn.addEventListener(
   }
 );
 
-function downloadGPX() {
-
-  if (!currentGPX) {
-    alert('No GPX file is available. Generate a route first.');
-    return;
-  }
-
-  const blob = new Blob(
-    [currentGPX],
-    {
-      type: 'application/gpx+xml;charset=utf-8'
-    }
-  );
-
-  const url = URL.createObjectURL(blob);
-
-  const link = document.createElement('a');
-
-  link.href = url;
-  link.download = 'RidgeWalker-route.gpx';
-
-  document.body.appendChild(link);
-
-  link.click();
-
-  document.body.removeChild(link);
-
-  URL.revokeObjectURL(url);
-}
 
 if (exportGPXBtn) {
   exportGPXBtn.addEventListener('click', downloadGPX);
