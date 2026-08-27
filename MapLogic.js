@@ -358,214 +358,63 @@ document
     }
   );
 
-
-// ========================================================================
-// TOPOGRAPHIC OPACITY
-// ========================================================================
-
-const opacitySlider =
-  document.getElementById(
-    'topo-opacity'
-  );
-
-const opacityVal =
-  document.getElementById(
-    'opacity-val'
-  );
+  // ── Opacity slider ───────────────────────────────────────────────────────
+  const opacitySlider = document.getElementById('topo-opacity');
+  const opacityVal    = document.getElementById('opacity-val');
+  opacitySlider.addEventListener('input', () => {
+    topoOpacity = opacitySlider.value / 100;
+    applyTopoOpacity(topoOpacity);
+    opacityVal.textContent = `${opacitySlider.value}%`;
+  });
 
 
-opacitySlider.addEventListener(
-  'input',
-  () => {
+  // ── Zoom buttons ─────────────────────────────────────────────────────────
+  document.getElementById('zoom-in').addEventListener('click',  () => map.zoomIn());
+  document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
-    topoOpacity =
-      opacitySlider.value / 100;
+  // ── Route planner ────────────────────────────────────────────────────────
+  // Drop a start/end pin with a button (places it at the current map
+  // center), then drag it to fine-tune. Markers own their own drag
+  // gesture (MapLibre disables map panning while a marker drag is in
+  // progress), so this sidesteps any conflict with the map's own
+  // click-and-drag panning — a plain map click was unreliable for this.
 
-    applyTopoOpacity(
-      topoOpacity
-    );
+  const START_COLOR = '#ff8400'; // matches --accent
+  const END_COLOR   = '#2fd4a0'; // matches --accent2
 
-    opacityVal.textContent =
-      `${opacitySlider.value}%`;
-  }
-);
+  const routeHintEl      = document.getElementById('route-hint');
+  const pointADotEl      = document.getElementById('point-a-dot');
+  const pointBDotEl      = document.getElementById('point-b-dot');
+  const pointACoordsEl   = document.getElementById('point-a-coords');
+  const pointBCoordsEl   = document.getElementById('point-b-coords');
+  const placeStartBtn    = document.getElementById('place-start');
+  const placeEndBtn      = document.getElementById('place-end');
+  const generateRouteBtn = document.getElementById('generate-route');
+  const clearRouteBtn    = document.getElementById('clear-route');
+  const routeStatsEl     = document.getElementById('route-stats');
+  const statDistanceEl   = document.getElementById('stat-distance');
+  const statTimeEl       = document.getElementById('stat-time');
+  const statClimbEl      = document.getElementById('stat-climb');
+  const routeErrorEl     = document.getElementById('route-error');
+  const exportGPXBtn     = document.getElementById('export-gpx');
 
+  let pointA = null;       // [lon, lat]
+  let pointB = null;       // [lon, lat]
+  let markerA = null;
+  let markerB = null;
+  let routeLoading = false;
 
-// ========================================================================
-// ZOOM BUTTONS
-// ========================================================================
+  let currentGPX = null;
 
-document
-  .getElementById('zoom-in')
-  .addEventListener(
-    'click',
-    () => map.zoomIn()
-  );
-
-
-document
-  .getElementById('zoom-out')
-  .addEventListener(
-    'click',
-    () => map.zoomOut()
-  );
-
-
-// ========================================================================
-// ROUTE PLANNER
-// ========================================================================
-
-const START_COLOR =
-  '#ff8400';
-
-const END_COLOR =
-  '#2fd4a0';
-
-
-// ── Route interface elements ─────────────────────────────────────────────
-
-const routeHintEl =
-  document.getElementById(
-    'route-hint'
-  );
-
-const pointADotEl =
-  document.getElementById(
-    'point-a-dot'
-  );
-
-const pointBDotEl =
-  document.getElementById(
-    'point-b-dot'
-  );
-
-const pointACoordsEl =
-  document.getElementById(
-    'point-a-coords'
-  );
-
-const pointBCoordsEl =
-  document.getElementById(
-    'point-b-coords'
-  );
-
-
-const placeStartBtn =
-  document.getElementById(
-    'place-start'
-  );
-
-const placeEndBtn =
-  document.getElementById(
-    'place-end'
-  );
-
-const generateRouteBtn =
-  document.getElementById(
-    'generate-route'
-  );
-
-const clearRouteBtn =
-  document.getElementById(
-    'clear-route'
-  );
-
-
-// GPX export button
-const exportGPXBtn =
-  document.getElementById(
-    'export-gpx'
-  );
-
-
-const routeStatsEl =
-  document.getElementById(
-    'route-stats'
-  );
-
-const statDistanceEl =
-  document.getElementById(
-    'stat-distance'
-  );
-
-const statTimeEl =
-  document.getElementById(
-    'stat-time'
-  );
-
-const statClimbEl =
-  document.getElementById(
-    'stat-climb'
-  );
-
-const routeErrorEl =
-  document.getElementById(
-    'route-error'
-  );
-
-
-// ========================================================================
-// ROUTE STATE
-// ========================================================================
-
-let pointA = null;
-
-let pointB = null;
-
-let markerA = null;
-
-let markerB = null;
-
-let routeLoading = false;
-
-
-// Stores the latest generated route
-// so that it can be exported as GPX.
-let currentRoute = null;
-
-
-// ========================================================================
-// FORMATTING
-// ========================================================================
-
-function formatCoords(
-  lon,
-  lat
-) {
-
-  return (
-    `${lat.toFixed(4)}°, ` +
-    `${lon.toFixed(4)}°`
-  );
-}
-
-
-function formatDuration(hours) {
-
-  const totalMinutes =
-    Math.round(
-      hours * 60
-    );
-
-
-  const h =
-    Math.floor(
-      totalMinutes / 60
-    );
-
-
-  const m =
-    totalMinutes % 60;
-
-
-  if (h === 0) {
-
-    return `${m} min`;
+  function formatCoords(lon, lat) {
+    return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
 
-
-  return `${h}h ${m}m`;
-}
+  function formatDuration(hours) {
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    return `${h}h ${m}m`;
+  }
 
 
 // ========================================================================
@@ -669,10 +518,7 @@ function invalidateRoute() {
   routeErrorEl.hidden =
     true;
 
-
-  // Existing GPX is now invalid
-  currentRoute = null;
-
+  currentGPX = null;
 
   if (exportGPXBtn) {
 
@@ -961,11 +807,7 @@ function resetRoute() {
   generateRouteBtn.disabled =
     true;
 
-
-  // Remove stored GPX route
-  currentRoute =
-    null;
-
+   currentGPX = null;
 
   if (exportGPXBtn) {
 
@@ -1342,10 +1184,7 @@ generateRouteBtn.addEventListener(
       // CHECK FOR SERVER ERROR
       // ------------------------------------------------
 
-      if (
-        !response.ok ||
-        !data.ok
-      ) {
+      if (!response.ok ||!data.ok) {
 
         throw new Error(
 
@@ -1355,19 +1194,10 @@ generateRouteBtn.addEventListener(
         );
       }
 
-
-      // ------------------------------------------------
-      // STORE ROUTE FOR GPX EXPORT
-      // ------------------------------------------------
-
-      currentRoute =
-        data.route;
-
+      currentGPX = data.gpx || null;
 
       if (exportGPXBtn) {
-
-        exportGPXBtn.disabled =
-          false;
+        exportGPXBtn.disabled = !currentGPX;
       }
 
 
@@ -1414,9 +1244,7 @@ generateRouteBtn.addEventListener(
       );
 
 
-      // Failed route cannot be exported
-      currentRoute =
-        null;
+      currentGPX = null;
 
 
       if (exportGPXBtn) {
@@ -1470,6 +1298,7 @@ generateRouteBtn.addEventListener(
       routeLoading =
         false;
 
+      
 
       generateRouteBtn.disabled =
         !(pointA && pointB);
@@ -1509,201 +1338,38 @@ generateRouteBtn.addEventListener(
   }
 );
 
+function downloadGPX() {
 
-// ========================================================================
-// GPX EXPORT
-// ========================================================================
-
-function exportGPX() {
-
-  // Must have a successful route
-  if (!currentRoute) {
-
-    alert(
-      'Please generate a route first.'
-    );
-
+  if (!currentGPX) {
+    alert('No GPX file is available. Generate a route first.');
     return;
   }
 
-
-  // Check route geometry
-  if (
-    !currentRoute.geometry ||
-    !Array.isArray(
-      currentRoute
-        .geometry
-        .coordinates
-    )
-  ) {
-
-    alert(
-      'The generated route does not contain valid coordinates.'
-    );
-
-    return;
-  }
-
-
-  const coordinates =
-    currentRoute
-      .geometry
-      .coordinates;
-
-
-  if (
-    coordinates.length === 0
-  ) {
-
-    alert(
-      'The generated route does not contain any route points.'
-    );
-
-    return;
-  }
-
-
-  // --------------------------------------------------
-  // CONVERT GEOJSON POINTS INTO GPX TRACK POINTS
-  // --------------------------------------------------
-
-  const trackPoints =
-    coordinates
-
-      .map(
-        coordinate => {
-
-          const lon =
-            coordinate[0];
-
-          const lat =
-            coordinate[1];
-
-          const elevation =
-            coordinate[2];
-
-
-          // Include elevation if available
-          if (
-            elevation !== undefined &&
-            elevation !== null &&
-            Number.isFinite(
-              Number(elevation)
-            )
-          ) {
-
-            return (
-`      <trkpt lat="${lat}" lon="${lon}">
-        <ele>${elevation}</ele>
-      </trkpt>`
-            );
-          }
-
-
-          // Latitude / longitude only
-          return (
-`      <trkpt lat="${lat}" lon="${lon}"></trkpt>`
-          );
-        }
-      )
-
-      .join(
-        '\n'
-      );
-
-
-  // --------------------------------------------------
-  // BUILD GPX FILE
-  // --------------------------------------------------
-
-  const gpx =
-`<?xml version="1.0" encoding="UTF-8"?>
-<gpx
-  version="1.1"
-  creator="RidgeWalker"
-  xmlns="http://www.topografix.com/GPX/1/1">
-
-  <metadata>
-    <name>RidgeWalker Route</name>
-    <desc>Route generated by RidgeWalker</desc>
-  </metadata>
-
-  <trk>
-
-    <name>RidgeWalker Route</name>
-
-    <trkseg>
-${trackPoints}
-    </trkseg>
-
-  </trk>
-
-</gpx>`;
-
-
-  // --------------------------------------------------
-  // CREATE DOWNLOAD
-  // --------------------------------------------------
-
-  const blob =
-    new Blob(
-      [
-        gpx
-      ],
-      {
-
-        type:
-          'application/gpx+xml;charset=utf-8'
-      }
-    );
-
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-
-  const downloadLink =
-    document.createElement(
-      'a'
-    );
-
-
-  downloadLink.href =
-    url;
-
-
-  downloadLink.download =
-    'RidgeWalker-route.gpx';
-
-
-  document.body.appendChild(
-    downloadLink
+  const blob = new Blob(
+    [currentGPX],
+    {
+      type: 'application/gpx+xml;charset=utf-8'
+    }
   );
 
+  const url = URL.createObjectURL(blob);
 
-  downloadLink.click();
+  const link = document.createElement('a');
 
+  link.href = url;
+  link.download = 'RidgeWalker-route.gpx';
 
-  document.body.removeChild(
-    downloadLink
-  );
+  document.body.appendChild(link);
 
+  link.click();
 
-  URL.revokeObjectURL(
-    url
-  );
+  document.body.removeChild(link);
+
+  URL.revokeObjectURL(url);
 }
 
-
-// Connect export button
 if (exportGPXBtn) {
-
-  exportGPXBtn.addEventListener(
-    'click',
-    exportGPX
-  );
+  exportGPXBtn.addEventListener('click', downloadGPX);
 }
 
 

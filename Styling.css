@@ -533,17 +533,13 @@ label:focus-visible,
 
     background: rgba(20, 35, 30, 0.95);
 
-    display: none !important;
+    display: none;
+  
 
     align-items: center;
     justify-content: center;
 
     z-index: 99999;
-}
-
-/* Only show it while route generation is active */
-#loading-screen.is-active {
-    display: flex !important;
 }
 
 .loading-content {
