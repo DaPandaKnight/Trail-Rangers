@@ -396,6 +396,7 @@ document
   const statTimeEl       = document.getElementById('stat-time');
   const statClimbEl      = document.getElementById('stat-climb');
   const routeErrorEl     = document.getElementById('route-error');
+  const exportGPXBtn     = document.getElementById('export-gpx');
 
   let pointA = null;       // [lon, lat]
   let pointB = null;       // [lon, lat]
