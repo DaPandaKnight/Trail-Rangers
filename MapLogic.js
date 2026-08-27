@@ -37,15 +37,10 @@ function transformRequest(url, resourceType) {
     // Remove LINZ API key if present
     parsed.searchParams.delete('api');
 
-    const path =
-      parsed.pathname.replace(/^\/v1\//, '');
+    const path = parsed.pathname.replace(/^\/v1\//, '');
 
     return {
-      url:
-        API_BASE +
-        '/proxy/' +
-        path +
-        parsed.search
+      url: API_BASE + '/proxy/' + path + parsed.search
     };
   }
 
@@ -56,10 +51,9 @@ function transformRequest(url, resourceType) {
 // Reduce simultaneous image requests if supported
 if (
   typeof maplibregl.setMaxParallelImageRequests ===
-  'function'
-) {
+  'function') {
   maplibregl.setMaxParallelImageRequests(4);
-}
+  }
 
 
 // ========================================================================
@@ -67,61 +61,36 @@ if (
 // ========================================================================
 
 const map = new maplibregl.Map({
-
   container: 'map',
 
   style: {
-
     version: 8,
+    sprite: `${API_BASE}/proxy/sprites/topographic`,
 
-    sprite:
-      `${API_BASE}/proxy/sprites/topographic`,
-
-    glyphs:
-      `${API_BASE}/proxy/fonts/{fontstack}/{range}.pbf`,
+    glyphs:`${API_BASE}/proxy/fonts/{fontstack}/{range}.pbf`,
 
     sources: {
-
       aerial: {
-
         type: 'raster',
-
-        tiles: [
-          AERIAL_URL
-        ],
+        tiles: [AERIAL_URL],
 
         tileSize: 256,
-
-        attribution:
-          '© LINZ CC BY 4.0'
-      }
+        attribution:'© LINZ CC BY 4.0'}
     },
 
     layers: [
-
       {
         id: 'aerial-layer',
-
         type: 'raster',
-
         source: 'aerial',
-
-        paint: {
-          'raster-opacity': 1
-        }
+        paint: {'raster-opacity': 1}
       }
     ]
   },
 
-  center: [
-    172.5,
-    -41.0
-  ],
-
+  center: [172.5,-41.0],
   zoom: 5,
-
   minZoom: 4,
-
   maxZoom: 19,
 
   transformRequest:
@@ -134,21 +103,15 @@ const map = new maplibregl.Map({
 // ========================================================================
 
 let topoLayerIds = [];
-
 let topoVisible = true;
-
 let topoOpacity = 0.6;
 
 
 map.on('load', async () => {
 
   try {
-
-    const resp =
-      await fetch(TOPO_STYLE_URL);
-
-    const style =
-      await resp.json();
+    const resp = await fetch(TOPO_STYLE_URL);
+    const style = await resp.json();
 
 
     // Add topo sources
@@ -170,9 +133,7 @@ map.on('load', async () => {
     ) {
 
       if (!map.getLayer(layer.id)) {
-
         map.addLayer(layer);
-
         topoLayerIds.push(
           layer.id
         );
@@ -181,17 +142,12 @@ map.on('load', async () => {
 
 
     // Set starting opacity
-    applyTopoOpacity(
-      topoOpacity
-    );
+    applyTopoOpacity(topoOpacity);
 
 
   } catch (err) {
 
-    console.error(
-      'Failed to load LINZ topo style:',
-      err
-    );
+    console.error('Failed to load LINZ topo style:',err);
   }
 
 });
@@ -200,81 +156,32 @@ map.on('load', async () => {
 // ── Topo opacity helper ──────────────────────────────────────────────────
 
 function applyTopoOpacity(opacity) {
-
   for (const id of topoLayerIds) {
-
     if (!map.getLayer(id)) {
-      continue;
-    }
-
-    const type =
-      map.getLayer(id).type;
-
-
+      continue;}
+    const type = map.getLayer(id).type;
     try {
-
       if (type === 'fill') {
-        map.setPaintProperty(
-          id,
-          'fill-opacity',
-          opacity
-        );
+        map.setPaintProperty(id, 'fill-opacity', opacity);
       }
-
-
       if (type === 'background') {
-        map.setPaintProperty(
-          id,
-          'background-opacity',
-          opacity
-        );
+        map.setPaintProperty(id, 'background-opacity', opacity);
       }
-
-
       if (type === 'line') {
-        map.setPaintProperty(
-          id,
-          'line-opacity',
-          opacity
-        );
+        map.setPaintProperty(id,'line-opacity',opacity);
       }
-
-
       if (type === 'symbol') {
+        map.setPaintProperty(id,'icon-opacity', opacity);
 
-        map.setPaintProperty(
-          id,
-          'icon-opacity',
-          opacity
-        );
-
-        map.setPaintProperty(
-          id,
-          'text-opacity',
-          opacity
-        );
+        map.setPaintProperty(id,'text-opacity',opacity);
       }
-
-
       if (type === 'circle') {
-        map.setPaintProperty(
-          id,
-          'circle-opacity',
-          opacity
-        );
+        map.setPaintProperty(id,'circle-opacity',opacity);
       }
-
-
-      if (type === 'raster') {
-        map.setPaintProperty(
-          id,
-          'raster-opacity',
-          opacity
-        );
+      if (type === 'raster') {map.setPaintProperty(id,'raster-opacity',opacity);
       }
 
     } catch (_) {
-
       // Ignore unsupported opacity properties
     }
   }
@@ -285,20 +192,10 @@ function applyTopoOpacity(opacity) {
 // COORDINATE DISPLAY
 // ========================================================================
 
-const coordsEl =
-  document.getElementById('coords');
+const coordsEl = document.getElementById('coords');
 
-
-map.on('mousemove', event => {
-
-  const {
-    lng,
-    lat
-  } = event.lngLat;
-
-
-  coordsEl.textContent =
-    `Longitude: ${lng.toFixed(5)}° Latitude: ${lat.toFixed(5)}° `;
+map.on('mousemove', event => {const {lng,lat} = event.lngLat;
+  coordsEl.textContent =`Longitude: ${lng.toFixed(5)}° Latitude: ${lat.toFixed(5)}° `;
 });
 
 
@@ -309,18 +206,8 @@ map.on('mousemove', event => {
 // Aerial imagery
 document
   .getElementById('toggle-aerial')
-  .addEventListener(
-    'change',
-    event => {
-
-      map.setLayoutProperty(
-        'aerial-layer',
-        'visibility',
-
-        event.target.checked
-          ? 'visible'
-          : 'none'
-      );
+  .addEventListener('change',event => {
+      map.setLayoutProperty('aerial-layer','visibility', event.target.checked? 'visible': 'none');
     }
   );
 
@@ -328,31 +215,13 @@ document
 // Topographic map
 document
   .getElementById('toggle-topo')
-  .addEventListener(
-    'change',
-    event => {
+  .addEventListener('change',
+    event => {topoVisible = event.target.checked;
+      const visibility =topoVisible? 'visible': 'none';
 
-      topoVisible =
-        event.target.checked;
-
-      const visibility =
-        topoVisible
-          ? 'visible'
-          : 'none';
-
-
-      for (
-        const id
-        of topoLayerIds
-      ) {
-
+      for (const id of topoLayerIds) {
         if (map.getLayer(id)) {
-
-          map.setLayoutProperty(
-            id,
-            'visibility',
-            visibility
-          );
+          map.setLayoutProperty(id, 'visibility', visibility);
         }
       }
     }
@@ -421,40 +290,20 @@ document
 
 function updateRouteHint() {
 
-  if (routeLoading) {
-    return;
-  }
+  if (routeLoading) {return;}
 
-
-  if (
-    !pointA &&
-    !pointB
-  ) {
-
-    routeHintEl.textContent =
-      'Drop a start and end pin, then drag to fine-tune';
-  }
-
-
+  if (!pointA &&!pointB) {
+    routeHintEl.textContent ='Drop a start and end pin, then drag to fine-tune';
+    }
   else if (!pointA) {
-
-    routeHintEl.textContent =
-      'Drop a start pin, then drag it into place';
-  }
-
-
+    routeHintEl.textContent = 'Drop a start pin, then drag it into place';
+    }
   else if (!pointB) {
-
-    routeHintEl.textContent =
-      'Drop an end pin, then drag it into place';
-  }
-
-
+    routeHintEl.textContent = 'Drop an end pin, then drag it into place';
+    }
   else {
-
-    routeHintEl.textContent =
-      'Ready — hit Generate Route (drag pins anytime to adjust)';
-  }
+    routeHintEl.textContent = 'Ready — hit Generate Route (drag pins anytime to adjust)';
+    }
 }
 
 
@@ -463,40 +312,14 @@ function updateRouteHint() {
 // ========================================================================
 
 function clearRouteLine() {
-
-  if (
-    map.getLayer(
-      'route-line'
-    )
-  ) {
-
-    map.removeLayer(
-      'route-line'
-    );
-  }
-
-
-  if (
-    map.getLayer(
-      'route-glow'
-    )
-  ) {
-
-    map.removeLayer(
-      'route-glow'
-    );
-  }
-
-
-  if (
-    map.getSource(
-      'route'
-    )
-  ) {
-
-    map.removeSource(
-      'route'
-    );
+  if (map.getLayer('route-line')) {
+    map.removeLayer('route-line');
+    }
+  if (map.getLayer('route-glow')) {
+    map.removeLayer('route-glow');
+    }
+  if (map.getSource('route')) {
+    map.removeSource('route');
   }
 }
 
@@ -506,16 +329,9 @@ function clearRouteLine() {
 // ========================================================================
 
 function invalidateRoute() {
-
   clearRouteLine();
-
-
-  routeStatsEl.hidden =
-    true;
-
-  routeErrorEl.hidden =
-    true;
-
+  routeStatsEl.hidden = true;
+  routeErrorEl.hidden = true;
 }
 
 
@@ -523,39 +339,21 @@ function invalidateRoute() {
 // UPDATE PIN DISPLAY
 // ========================================================================
 
-function setPointDisplay(
-  which,
-  lng,
-  lat
-) {
+function setPointDisplay(which,lng,lat) {
 
-  const dotEl =
-    which === 'start'
+  const dotEl = which === 'start'
       ? pointADotEl
       : pointBDotEl;
 
-
-  const coordinatesEl =
-    which === 'start'
+  const coordinatesEl =which === 'start'
       ? pointACoordsEl
       : pointBCoordsEl;
 
+  coordinatesEl.textContent = formatCoords(lng,lat);
 
-  coordinatesEl.textContent =
-    formatCoords(
-      lng,
-      lat
-    );
+  coordinatesEl.classList.add('is-set');
 
-
-  coordinatesEl.classList.add(
-    'is-set'
-  );
-
-
-  dotEl.classList.add(
-    'is-set'
-  );
+  dotEl.classList.add('is-set');
 }
 
 
@@ -565,165 +363,67 @@ function setPointDisplay(
 
 function placePin(which) {
 
-  const center =
-    map.getCenter();
-
-
-  const lngLat = [
-    center.lng,
-    center.lat
-  ];
+  const center = map.getCenter();
+  const lngLat = [center.lng, center.lat];
 
 
   // ── START ──────────────────────────────────────────────────────────────
 
   if (which === 'start') {
-
-    pointA =
-      lngLat;
-
+    pointA = lngLat;
 
     if (markerA) {
-
-      markerA.setLngLat(
-        lngLat
-      );
+      markerA.setLngLat(lngLat);
 
     } else {
+      markerA =new maplibregl.Marker({
+          color:START_COLOR,
+          draggable:true})
+          .setLngLat(lngLat)
+          .addTo(map);
 
-      markerA =
-        new maplibregl.Marker({
-
-          color:
-            START_COLOR,
-
-          draggable:
-            true
-        })
-
-          .setLngLat(
-            lngLat
-          )
-
-          .addTo(
-            map
-          );
-
-
-      markerA.on(
-        'drag',
-        () => {
-
-          const ll =
-            markerA.getLngLat();
-
-
-          pointA = [
-            ll.lng,
-            ll.lat
-          ];
-
-
-          setPointDisplay(
-            'start',
-            ll.lng,
-            ll.lat
-          );
-
-
+      markerA.on('drag',() => {
+          const ll = markerA.getLngLat();
+          pointA = [ll.lng, ll.lat];
+          setPointDisplay('start', ll.lng, ll.lat);
           invalidateRoute();
-        }
-      );
+        });
     }
-
-
-    setPointDisplay(
-      'start',
-      lngLat[0],
-      lngLat[1]
-    );
+    setPointDisplay('start', lngLat[0],lngLat[1]);
   }
-
 
   // ── END ────────────────────────────────────────────────────────────────
 
   else {
-
-    pointB =
-      lngLat;
-
+    pointB = lngLat;
 
     if (markerB) {
-
-      markerB.setLngLat(
-        lngLat
-      );
+      markerB.setLngLat(lngLat);
 
     } else {
+      markerB = new maplibregl.Marker({
+          color:END_COLOR,
+          draggable: true})
+          .setLngLat(lngLat)
+          .addTo(map);
 
-      markerB =
-        new maplibregl.Marker({
-
-          color:
-            END_COLOR,
-
-          draggable:
-            true
-        })
-
-          .setLngLat(
-            lngLat
-          )
-
-          .addTo(
-            map
-          );
-
-
-      markerB.on(
-        'drag',
-        () => {
-
-          const ll =
-            markerB.getLngLat();
-
-
-          pointB = [
-            ll.lng,
-            ll.lat
-          ];
-
-
-          setPointDisplay(
-            'end',
-            ll.lng,
-            ll.lat
-          );
-
-
+      markerB.on('drag',() => {
+          const ll =markerB.getLngLat();
+          pointB = [ ll.lng,ll.lat];
+          setPointDisplay('end',ll.lng,ll.lat);
           invalidateRoute();
         }
       );
     }
-
-
-    setPointDisplay(
-      'end',
-      lngLat[0],
-      lngLat[1]
-    );
+    setPointDisplay('end',lngLat[0],lngLat[1]);
   }
-
 
   // Moving a pin removes the existing route
   invalidateRoute();
 
-
   // Generate becomes available when
   // both points have been selected
-  generateRouteBtn.disabled =
-    !(pointA && pointB);
-
+  generateRouteBtn.disabled = !(pointA && pointB);
 
   updateRouteHint();
 }
@@ -735,75 +435,34 @@ function placePin(which) {
 
 function resetRoute() {
 
-  pointA =
-    null;
-
-  pointB =
-    null;
-
+  pointA =null;
+  pointB =null;
 
   if (markerA) {
-
     markerA.remove();
-
-    markerA =
-      null;
+    markerA =null;
   }
-
 
   if (markerB) {
-
     markerB.remove();
-
-    markerB =
-      null;
+    markerB = null;
   }
-
 
   clearRouteLine();
 
-
-  pointADotEl.classList.remove(
-    'is-set'
-  );
-
-  pointBDotEl.classList.remove(
-    'is-set'
-  );
-
-
-  pointACoordsEl.classList.remove(
-    'is-set'
-  );
-
-  pointBCoordsEl.classList.remove(
-    'is-set'
-  );
-
-
-  pointACoordsEl.textContent =
-    'Not set';
-
-  pointBCoordsEl.textContent =
-    'Not set';
-
-
-  routeStatsEl.hidden =
-    true;
-
-  routeErrorEl.hidden =
-    true;
-
-
-  generateRouteBtn.disabled =
-    true;
+  pointADotEl.classList.remove('is-set');
+  pointBDotEl.classList.remove('is-set');
+  pointACoordsEl.classList.remove('is-set');
+  pointBCoordsEl.classList.remove('is-set');
+  pointACoordsEl.textContent = 'Not set';
+  pointBCoordsEl.textContent ='Not set';
+  routeStatsEl.hidden = true;
+  routeErrorEl.hidden = true;
+  generateRouteBtn.disabled = true;
 
   if (exportGPXBtn) {
-
-    exportGPXBtn.disabled =
-      true;
+    exportGPXBtn.disabled =true;
   }
-
 
   updateRouteHint();
 }
@@ -813,161 +472,78 @@ function resetRoute() {
 // DRAW ROUTE
 // ========================================================================
 
-function drawRoute(
-  routeFeature
-) {
-
+function drawRoute(routeFeature) {
   const geojson = {
-
-    type:
-      'FeatureCollection',
-
-    features: [
-      routeFeature
-    ]
+    type:'FeatureCollection',
+    features: [routeFeature]
   };
 
 
-  if (
-    map.getSource(
-      'route'
-    )
-  ) {
-
-    map
-      .getSource(
-        'route'
-      )
-      .setData(
-        geojson
-      );
-
+  if (map.getSource('route')) {
+    map.getSource('route')
+       .setData(geojson);
   } else {
-
-    map.addSource(
-      'route',
-      {
-
-        type:
-          'geojson',
-
-        data:
-          geojson
+    map.addSource('route',{
+        type:'geojson',
+        data:geojson
       }
     );
 
-
     // Route glow
     map.addLayer({
+      id:'route-glow',
+      type:'line',
 
-      id:
-        'route-glow',
-
-      type:
-        'line',
-
-      source:
-        'route',
+      source:'route',
 
       layout: {
-
-        'line-join':
-          'round',
-
-        'line-cap':
-          'round'
+        'line-join': 'round',
+        'line-cap':'round'
       },
 
       paint: {
-
-        'line-color':
-          END_COLOR,
-
-        'line-width':
-          9,
-
-        'line-blur':
-          6,
-
-        'line-opacity':
-          0.35
-      }
+        'line-color': END_COLOR,
+        'line-width': 9,
+        'line-blur': 6,
+        'line-opacity': 0.35}
     });
-
 
     // Main route line
     map.addLayer({
-
-      id:
-        'route-line',
-
-      type:
-        'line',
-
-      source:
-        'route',
+      id:'route-line',
+      type:'line',
+      source:'route',
 
       layout: {
-
-        'line-join':
-          'round',
-
-        'line-cap':
-          'round'
+        'line-join':'round',
+        'line-cap':'round'
       },
 
       paint: {
-
-        'line-color':
-          END_COLOR,
-
-        'line-width':
-          3.5,
-
-        'line-opacity':
-          0.95
+        'line-color': END_COLOR,
+        'line-width': 3.5,
+        'line-opacity': 0.95
       }
     });
   }
 
 
   // Zoom map to generated route
-  const routeCoordinates =
-    routeFeature
-      .geometry
-      .coordinates;
+  const routeCoordinates = routeFeature.geometry.coordinates;
 
 
-  const bounds =
-    routeCoordinates.reduce(
-
-      (
-        existingBounds,
-        coordinate
-      ) =>
-
-        existingBounds.extend(
-          coordinate
-        ),
+  const bounds = routeCoordinates.reduce(
+      (existingBounds, coordinate) =>
+        existingBounds.extend(coordinate),
 
       new maplibregl.LngLatBounds(
-
         routeCoordinates[0],
-
         routeCoordinates[0]
       )
     );
 
-
-  map.fitBounds(
-    bounds,
-    {
-
-      padding:
-        80,
-
-      duration:
-        800
+  map.fitBounds(bounds,{
+      padding: 80, duration: 800
     }
   );
 }
@@ -977,29 +553,18 @@ function drawRoute(
 // PIN BUTTONS
 // ========================================================================
 
-placeStartBtn.addEventListener(
-  'click',
+placeStartBtn.addEventListener('click',
   () => {
-
     if (!routeLoading) {
-
-      placePin(
-        'start'
-      );
+      placePin('start');
     }
   }
 );
 
 
-placeEndBtn.addEventListener(
-  'click',
+placeEndBtn.addEventListener('click',
   () => {
-
-    if (!routeLoading) {
-
-      placePin(
-        'end'
-      );
+    if (!routeLoading) {placePin('end');
     }
   }
 );
@@ -1009,103 +574,49 @@ placeEndBtn.addEventListener(
 // GENERATE ROUTE
 // ========================================================================
 
-generateRouteBtn.addEventListener(
-  'click',
-  async () => {
-
-    if (
-      !pointA ||
-      !pointB ||
-      routeLoading
-    ) {
-
+generateRouteBtn.addEventListener('click', async () => {
+    if (!pointA ||!pointB ||routeLoading) {
       return;
     }
-
-
     // --------------------------------------------------
     // SHOW LOADING SCREEN
     // --------------------------------------------------
 
     showLoadingScreen();
-
-
-    routeLoading =
-      true;
-
-
-    generateRouteBtn.disabled =
-      true;
-
-
-    generateRouteBtn.textContent =
-      'Calculating…';
-
-
-    clearRouteBtn.disabled =
-      true;
-
-
-    placeStartBtn.disabled =
-      true;
-
-
-    placeEndBtn.disabled =
-      true;
-
-
+    routeLoading =true;
+    generateRouteBtn.disabled =true;
+    generateRouteBtn.textContent ='Calculating…';
+    clearRouteBtn.disabled = true;
+    placeStartBtn.disabled =true;
+    placeEndBtn.disabled = true;
     if (exportGPXBtn) {
-
-      exportGPXBtn.disabled =
-        true;
+      exportGPXBtn.disabled =true;
     }
-
 
     if (markerA) {
-
-      markerA.setDraggable(
-        false
-      );
+      markerA.setDraggable(false);
     }
-
 
     if (markerB) {
-
-      markerB.setDraggable(
-        false
-      );
+      markerB.setDraggable(false);
     }
 
-
-    routeErrorEl.hidden =
-      true;
-
-
-    routeStatsEl.hidden =
-      true;
-
-
-    routeHintEl.textContent =
-      'Crunching terrain data — this can take a little while for longer routes.';
+    routeErrorEl.hidden = true;
+    routeStatsEl.hidden =true;
+    routeHintEl.textContent ='Crunching terrain data — this can take a little while for longer routes.';
 
 
     // --------------------------------------------------
     // TIMEOUT
     // --------------------------------------------------
 
-    const controller =
-      new AbortController();
-
+    const controller =new AbortController();
 
     // 120 second timeout
-    const timeoutId =
-      setTimeout(
+    const timeoutId =setTimeout(
         () =>
-          controller.abort(),
-
-        120000
+          controller.abort(), 120000
       );
-
 
     try {
 
@@ -1117,35 +628,15 @@ generateRouteBtn.addEventListener(
         await fetch(
           ROUTE_API_URL,
           {
-
-            method:
-              'POST',
-
-            headers: {
-
-              'Content-Type':
-                'application/json'
-            },
-
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
             body:
-              JSON.stringify({
-
-                a:
-                  pointA,
-
-                b:
-                  pointB
-              }),
-
-            signal:
-              controller.signal
+              JSON.stringify({a: pointA,b: pointB}),
+            signal:controller.signal
           }
         );
 
-
-      clearTimeout(
-        timeoutId
-      );
+      clearTimeout(timeoutId);
 
 
       // ------------------------------------------------
@@ -1155,14 +646,9 @@ generateRouteBtn.addEventListener(
       let data;
 
       try {
-
-        data =
-          await response.json();
-
+        data = await response.json();
       } catch (_) {
-
         throw new Error(
-
           `Server returned an unreadable response (status ${response.status}).`
         );
       }
@@ -1173,145 +659,66 @@ generateRouteBtn.addEventListener(
       // ------------------------------------------------
 
       if (!response.ok ||!data.ok) {
-
-        throw new Error(
-
-          data.error ||
-
-          `Route request failed (status ${response.status}).`
-        );
+        throw new Error(data.error ||`Route request failed (status ${response.status}).`);
       }
-
-    
-
 
       // ------------------------------------------------
       // DRAW ROUTE
       // ------------------------------------------------
-
-      drawRoute(
-        data.route
-      );
-
+      drawRoute(data.route);
 
       // ------------------------------------------------
       // DISPLAY ROUTE STATISTICS
       // ------------------------------------------------
 
-      statDistanceEl.textContent =
-        `${data.distance_km.toFixed(2)} km`;
-
-
-      statTimeEl.textContent =
-        formatDuration(
-          data.estimated_hours
-        );
-
-
-      statClimbEl.textContent =
-        `${Math.round(data.climb_m)} m`;
-
-
-      routeStatsEl.hidden =
-        false;
-
-
-      routeHintEl.textContent =
-        'Route generated. Drag either pin to plan a new route.';
-
-
+      statDistanceEl.textContent =`${data.distance_km.toFixed(2)} km`;
+      statTimeEl.textContent = formatDuration(data.estimated_hours);
+      statClimbEl.textContent = `${Math.round(data.climb_m)} m`;
+      routeStatsEl.hidden = false;
+      routeHintEl.textContent = 'Route generated. Drag either pin to plan a new route.';
+    
     } catch (error) {
+      clearTimeout(timeoutId);
 
-
-      clearTimeout(
-        timeoutId
-      );
-
-
-      const message =
-        error.name ===
-        'AbortError'
-
+      const message =error.name ==='AbortError'
           ? 'The route request timed out. Try two points that are closer together.'
-
           : (
-              error.message ||
-
-              'Something went wrong generating the route.'
+              error.message ||'Something went wrong generating the route.'
             );
 
-
-      routeErrorEl.textContent =
-        message;
-
-
-      routeErrorEl.hidden =
-        false;
-
-
-      routeHintEl.textContent =
-        'Ready — hit Generate Route to try again.';
-
-
-      console.error(
-        'Route generation error:',
-        error
-      );
-
+      routeErrorEl.textContent =message;
+      routeErrorEl.hidden =false;
+      routeHintEl.textContent = 'Ready — hit Generate Route to try again.';
+      console.error('Route generation error:',error);
 
     } finally {
-
 
       // ------------------------------------------------
       // ALWAYS REMOVE LOADING SCREEN
       // ------------------------------------------------
-
       hideLoadingScreen();
+      routeLoading =false;
 
+      generateRouteBtn.disabled = !(pointA && pointB);
 
-      routeLoading =
-        false;
+      generateRouteBtn.textContent ='Generate Route';
 
-      
+      clearRouteBtn.disabled = false;
 
-      generateRouteBtn.disabled =
-        !(pointA && pointB);
+      placeStartBtn.disabled = false;
 
-
-      generateRouteBtn.textContent =
-        'Generate Route';
-
-
-      clearRouteBtn.disabled =
-        false;
-
-
-      placeStartBtn.disabled =
-        false;
-
-
-      placeEndBtn.disabled =
-        false;
-
+      placeEndBtn.disabled = false;
 
       if (markerA) {
-
-        markerA.setDraggable(
-          true
-        );
+        markerA.setDraggable(true);
       }
 
-
       if (markerB) {
-
-        markerB.setDraggable(
-          true
-        );
+        markerB.setDraggable(true);
       }
     }
   }
 );
-
 
 if (exportGPXBtn) {
   exportGPXBtn.addEventListener('click', downloadGPX);
@@ -1322,50 +729,28 @@ if (exportGPXBtn) {
 // CLEAR ROUTE
 // ========================================================================
 
-clearRouteBtn.addEventListener(
-  'click',
-  () => {
-
+clearRouteBtn.addEventListener('click',() => {
     if (routeLoading) {
-      return;
-    }
-
+      return;}
     resetRoute();
   }
 );
 
-
 // ========================================================================
 // LOADING SCREEN
 // ========================================================================
-
 function showLoadingScreen() {
-
-  const loadingScreen =
-    document.getElementById(
-      'loading-screen'
-    );
-
+  const loadingScreen = document.getElementById('loading-screen');
 
   if (loadingScreen) {
-
-    loadingScreen.style.display =
-      'flex';
+    loadingScreen.style.display = 'flex';
   }
 }
 
-
 function hideLoadingScreen() {
-
-  const loadingScreen =
-    document.getElementById(
-      'loading-screen'
-    );
-
+  const loadingScreen = document.getElementById('loading-screen');
 
   if (loadingScreen) {
-
-    loadingScreen.style.display =
-      'none';
+    loadingScreen.style.display ='none';
   }
 }
