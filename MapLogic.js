@@ -460,10 +460,6 @@ function resetRoute() {
   routeErrorEl.hidden = true;
   generateRouteBtn.disabled = true;
 
-  if (exportGPXBtn) {
-    exportGPXBtn.disabled =true;
-  }
-
   updateRouteHint();
 }
 
