@@ -404,8 +404,6 @@ document
   let markerB = null;
   let routeLoading = false;
 
-
-
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
