@@ -345,6 +345,33 @@ label:focus-visible,
   outline-offset: 3px;
 }
 
+/* Prevent the desktop panel exceeding shorter screens */
+#panel {
+  max-height: calc(100dvh - var(--navbar-height) - 32px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+#panel::-webkit-scrollbar {
+  width: 5px;
+}
+
+#panel::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 10px;
+}
+
+/* Improve keyboard accessibility */
+button:focus-visible,
+input:focus-visible,
+label:focus-visible,
+.toggle:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 3px;
+}
+
 /* ── Tablet and mobile ── */
 @media (max-width: 768px) {
   #panel {

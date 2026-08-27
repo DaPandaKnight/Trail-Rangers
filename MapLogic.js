@@ -356,211 +356,55 @@ document
         }
       }
     }
-  );
+  });
+
+  // ── Opacity slider ───────────────────────────────────────────────────────
+  const opacitySlider = document.getElementById('topo-opacity');
+  const opacityVal    = document.getElementById('opacity-val');
+  opacitySlider.addEventListener('input', () => {
+    topoOpacity = opacitySlider.value / 100;
+    applyTopoOpacity(topoOpacity);
+    opacityVal.textContent = `${opacitySlider.value}%`;
+  });
 
 
-// ========================================================================
-// TOPOGRAPHIC OPACITY
-// ========================================================================
+  // ── Zoom buttons ─────────────────────────────────────────────────────────
+  document.getElementById('zoom-in').addEventListener('click',  () => map.zoomIn());
+  document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
-const opacitySlider =
-  document.getElementById(
-    'topo-opacity'
-  );
+  // ── Route planner ────────────────────────────────────────────────────────
+  // Drop a start/end pin with a button (places it at the current map
+  // center), then drag it to fine-tune. Markers own their own drag
+  // gesture (MapLibre disables map panning while a marker drag is in
+  // progress), so this sidesteps any conflict with the map's own
+  // click-and-drag panning — a plain map click was unreliable for this.
 
-const opacityVal =
-  document.getElementById(
-    'opacity-val'
-  );
+  const START_COLOR = '#ff8400'; // matches --accent
+  const END_COLOR   = '#2fd4a0'; // matches --accent2
 
+  const routeHintEl      = document.getElementById('route-hint');
+  const pointADotEl      = document.getElementById('point-a-dot');
+  const pointBDotEl      = document.getElementById('point-b-dot');
+  const pointACoordsEl   = document.getElementById('point-a-coords');
+  const pointBCoordsEl   = document.getElementById('point-b-coords');
+  const placeStartBtn    = document.getElementById('place-start');
+  const placeEndBtn      = document.getElementById('place-end');
+  const generateRouteBtn = document.getElementById('generate-route');
+  const clearRouteBtn    = document.getElementById('clear-route');
+  const routeStatsEl     = document.getElementById('route-stats');
+  const statDistanceEl   = document.getElementById('stat-distance');
+  const statTimeEl       = document.getElementById('stat-time');
+  const statClimbEl      = document.getElementById('stat-climb');
+  const routeErrorEl     = document.getElementById('route-error');
 
-opacitySlider.addEventListener(
-  'input',
-  () => {
+  let pointA = null;       // [lon, lat]
+  let pointB = null;       // [lon, lat]
+  let markerA = null;
+  let markerB = null;
+  let routeLoading = false;
 
-    topoOpacity =
-      opacitySlider.value / 100;
-
-    applyTopoOpacity(
-      topoOpacity
-    );
-
-    opacityVal.textContent =
-      `${opacitySlider.value}%`;
-  }
-);
-
-
-// ========================================================================
-// ZOOM BUTTONS
-// ========================================================================
-
-document
-  .getElementById('zoom-in')
-  .addEventListener(
-    'click',
-    () => map.zoomIn()
-  );
-
-
-document
-  .getElementById('zoom-out')
-  .addEventListener(
-    'click',
-    () => map.zoomOut()
-  );
-
-
-// ========================================================================
-// ROUTE PLANNER
-// ========================================================================
-
-const START_COLOR =
-  '#ff8400';
-
-const END_COLOR =
-  '#2fd4a0';
-
-
-// ── Route interface elements ─────────────────────────────────────────────
-
-const routeHintEl =
-  document.getElementById(
-    'route-hint'
-  );
-
-const pointADotEl =
-  document.getElementById(
-    'point-a-dot'
-  );
-
-const pointBDotEl =
-  document.getElementById(
-    'point-b-dot'
-  );
-
-const pointACoordsEl =
-  document.getElementById(
-    'point-a-coords'
-  );
-
-const pointBCoordsEl =
-  document.getElementById(
-    'point-b-coords'
-  );
-
-
-const placeStartBtn =
-  document.getElementById(
-    'place-start'
-  );
-
-const placeEndBtn =
-  document.getElementById(
-    'place-end'
-  );
-
-const generateRouteBtn =
-  document.getElementById(
-    'generate-route'
-  );
-
-const clearRouteBtn =
-  document.getElementById(
-    'clear-route'
-  );
-
-
-// GPX export button
-const exportGPXBtn =
-  document.getElementById(
-    'export-gpx'
-  );
-
-
-const routeStatsEl =
-  document.getElementById(
-    'route-stats'
-  );
-
-const statDistanceEl =
-  document.getElementById(
-    'stat-distance'
-  );
-
-const statTimeEl =
-  document.getElementById(
-    'stat-time'
-  );
-
-const statClimbEl =
-  document.getElementById(
-    'stat-climb'
-  );
-
-const routeErrorEl =
-  document.getElementById(
-    'route-error'
-  );
-
-
-// ========================================================================
-// ROUTE STATE
-// ========================================================================
-
-let pointA = null;
-
-let pointB = null;
-
-let markerA = null;
-
-let markerB = null;
-
-let routeLoading = false;
-
-
-// Stores the latest generated route
-// so that it can be exported as GPX.
-let currentRoute = null;
-
-
-// ========================================================================
-// FORMATTING
-// ========================================================================
-
-function formatCoords(
-  lon,
-  lat
-) {
-
-  return (
-    `${lat.toFixed(4)}°, ` +
-    `${lon.toFixed(4)}°`
-  );
-}
-
-
-function formatDuration(hours) {
-
-  const totalMinutes =
-    Math.round(
-      hours * 60
-    );
-
-
-  const h =
-    Math.floor(
-      totalMinutes / 60
-    );
-
-
-  const m =
-    totalMinutes % 60;
-
-
-  if (h === 0) {
-
-    return `${m} min`;
+  function formatCoords(lon, lat) {
+    return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
 
 
