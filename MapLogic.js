@@ -356,7 +356,7 @@ document
         }
       }
     }
-  });
+  );
 
   // ── Opacity slider ───────────────────────────────────────────────────────
   const opacitySlider = document.getElementById('topo-opacity');
@@ -407,9 +407,11 @@ document
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
   }
 
-
-  return `${h}h ${m}m`;
-}
+  function formatDuration(hours) {
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    return `${h}h ${m}m`;
+  }
 
 
 // ========================================================================
