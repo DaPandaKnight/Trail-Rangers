@@ -12,7 +12,6 @@
   --text:     #2b2620;
   --muted:    #7a7266;
   --radius:   10px;
-  --navbar-height: 64px;
 }
 
 html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'DM Mono', monospace; overflow: hidden; }
@@ -20,37 +19,9 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 /* ── Map ── */
 #map { position: fixed; inset: 0; }
 
-/* ── Navbar ── */
-.navbar {
-  position:
-      fixed;
-      top: 0; 
-      left: 0; 
-      right: 0; 
-      z-index: 15;
-  height: var(--navbar-height);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 0 20px;
-  background: rgba(var(--panel-rgb), 0.9);
-  backdrop-filter: blur(16px);
-  border-bottom: 1px solid var(--border);
-}
-.navbar-title {
-  font-family: 'Syne', sans-serif;
-  font-weight: 800;
-  font-size: 1.3rem;
-  letter-spacing: 0.01em;
-  color: var(--text);
-}
-.navbar-title-accent {
-  color: var(--accent);
-}
-
 /* ── Side Panel ── */
 #panel {
-  position: fixed; top: calc(var(--navbar-height) + 16px); bottom: 16px; left: 16px; z-index: 10;
+  position: fixed; top: 50%; left: 48px; transform: translateY(-50%); z-index: 10;
   width: 300px;
   background: rgba(var(--panel-rgb), 0.92);
   box-shadow: 0 8px 28px rgba(80, 60, 30, 0.1);
@@ -60,7 +31,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   padding: 26px;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
   gap: 18px;
 }
 
@@ -320,7 +290,7 @@ body {
 
 /* Prevent the desktop panel exceeding shorter screens */
 #panel {
-  max-height: calc(100dvh - var(--navbar-height) - 32px);
+  max-height: calc(100dvh - 64px);
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
@@ -352,6 +322,7 @@ label:focus-visible,
     left: 10px;
     right: 10px;
     bottom: 46px;
+    transform: none;
 
     width: 100%;
     max-height: 40dvh;
@@ -363,11 +334,6 @@ label:focus-visible,
     /* Allows the panel to scroll without moving the map */
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
-  }
-
-  .navbar {
-    height: 52px;
-    padding: 0 14px;
   }
 
   /* Make layer controls easier to tap */
@@ -479,13 +445,8 @@ label:focus-visible,
 
 /* ── Landscape phones ── */
 @media (max-height: 500px) and (orientation: landscape) {
-  .navbar {
-    height: 40px;
-    padding: 0 12px;
-  }
-
   #panel {
-    top: 48px;
+    top: 16px;
     bottom: 8px;
     left: 8px;
     right: auto;
