@@ -272,6 +272,7 @@ document
   let markerA = null;
   let markerB = null;
   let routeLoading = false;
+  let currentRouteFeature = null;
 
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
@@ -321,6 +322,11 @@ function clearRouteLine() {
   if (map.getSource('route')) {
     map.removeSource('route');
   }
+  currentRouteFeature = null;
+
+  if (exportGPXBtn) {
+  exportGPXBtn.disabled = true;
+}
 }
 
 
@@ -473,7 +479,12 @@ function drawRoute(routeFeature) {
     type:'FeatureCollection',
     features: [routeFeature]
   };
+  
+  currentRouteFeature = routeFeature;
 
+if (exportGPXBtn) {
+  exportGPXBtn.disabled = false;
+}
 
   if (map.getSource('route')) {
     map.getSource('route')
@@ -716,6 +727,40 @@ generateRouteBtn.addEventListener('click', async () => {
   }
 );
 
+function downloadGPX() {
+  if (!currentRouteFeature) {
+    routeErrorEl.textContent = 'Generate a route before exporting GPX.';
+    routeErrorEl.hidden = false;
+    return;
+  }
+
+  const coords = currentRouteFeature.geometry.coordinates;
+
+  const trackPoints = coords.map(([lon, lat, ele]) => {
+    const elevation = ele !== undefined ? `<ele>${ele}</ele>` : '';
+    return `      <trkpt lat="${lat}" lon="${lon}">${elevation}</trkpt>`;
+  }).join('\n');
+
+  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="RidgeWalker" xmlns="http://www.topografix.com/GPX/1/1">
+  <trk>
+    <name>RidgeWalker Route</name>
+    <trkseg>
+${trackPoints}
+    </trkseg>
+  </trk>
+</gpx>`;
+
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+
+  link.href = url;
+  link.download = 'ridgewalker-route.gpx';
+  link.click();
+
+  URL.revokeObjectURL(url);
+}
 if (exportGPXBtn) {
   exportGPXBtn.addEventListener('click', downloadGPX);
 }
