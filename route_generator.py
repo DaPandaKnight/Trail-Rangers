@@ -461,10 +461,20 @@ def _resolve_water_data_path():
 def _load_local_water_index():
     """
     Loads the local water dataset (see _resolve_water_data_path for where
-    from) into memory and builds an STRtree spatial index over the water
-    polygons and stream lines separately. Cached at module level — this
-    runs at most once per process (once per Lambda cold start, not once
-    per request), not once per request.
+    from) into memory and builds an STRtree spatial index (used for the
+    per-bbox feature COUNT shown in logging, and for the Overpass-fallback
+    code path).
+
+    The global water union and stream buffer union are now precomputed
+    OFFLINE by prefetch_nz_water_data.py and loaded directly here, rather
+    than computed at cold-start — see that script's main() for why: a
+    real production run showed the stream buffer union alone taking 677
+    seconds (over 11 minutes) at cold-start, almost certainly enough to
+    exceed a typical Lambda timeout and fail the function outright. That
+    work has to happen offline, not on a live request's critical path.
+
+    Cached at module level — this whole function runs at most once per
+    process (once per Lambda cold start), not once per request.
     """
     global _local_water_index, _local_water_load_attempted
     if _local_water_load_attempted:
@@ -481,7 +491,36 @@ def _load_local_water_index():
         return None
 
     with open(data_path, "rb") as f:
-        water_polygons, stream_lines = pickle.load(f)
+        loaded = pickle.load(f)
+
+    if len(loaded) == 4:
+        water_polygons, stream_lines, global_water_union, global_stream_buffer_union = loaded
+    else:
+        # Old-format pickle (from before unions were precomputed offline) —
+        # fall back to computing them here, with a clear warning that this
+        # is the slow path this whole change was meant to avoid. Re-run
+        # prefetch_nz_water_data.py to get the fast, offline-precomputed
+        # version instead of hitting this every cold start.
+        water_polygons, stream_lines = loaded
+        print("WARNING: this nz_water_data.pkl is in the OLD format (no precomputed "
+              "unions) — computing them now, which may take a long time (a real run "
+              "measured 677s for the stream buffer alone). Re-run "
+              "prefetch_nz_water_data.py to save the precomputed version and skip "
+              "this every cold start.")
+
+        t_union_start = time.time()
+        global_water_union = unary_union(water_polygons) if water_polygons else None
+        print(f"Computed global water union in {time.time() - t_union_start:.2f}s.")
+
+        NZ_REPRESENTATIVE_LAT = -41.0
+        global_stream_buffer_union = None
+        if stream_lines:
+            t_buffer_start = time.time()
+            merged_streams = unary_union(stream_lines)
+            m_per_deg_lat, m_per_deg_lon = meters_per_degree(NZ_REPRESENTATIVE_LAT)
+            buffer_deg = STREAM_BUFFER_M / min(m_per_deg_lat, m_per_deg_lon)
+            global_stream_buffer_union = merged_streams.buffer(buffer_deg)
+            print(f"Computed global stream buffer union in {time.time() - t_buffer_start:.2f}s.")
 
     water_tree = STRtree(water_polygons) if water_polygons else None
     stream_tree = STRtree(stream_lines) if stream_lines else None
@@ -492,6 +531,8 @@ def _load_local_water_index():
     _local_water_index = {
         "water_tree": water_tree, "water_polygons": water_polygons,
         "stream_tree": stream_tree, "stream_lines": stream_lines,
+        "global_water_union": global_water_union,
+        "global_stream_buffer_union": global_stream_buffer_union,
     }
     return _local_water_index
 
@@ -616,6 +657,23 @@ def build_water_mask(water_polygons: list[Polygon], lats: np.ndarray,
     merged = unary_union(water_polygons)
     lon_grid, lat_grid = np.meshgrid(lons, lats)
     return shapely.contains_xy(merged, lon_grid, lat_grid)
+
+
+def rasterize_precomputed_geometry(merged_geometry, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+    """
+    Same rasterization as build_water_mask()/the contains_xy step inside
+    build_stream_proximity_mask(), but for a geometry that's ALREADY
+    merged (see _load_local_water_index's precomputed global unions) —
+    skips the expensive unary_union() call entirely, since that's the
+    confirmed bottleneck at country-spanning bbox scale, not the
+    rasterization itself (which was already shown fast — see
+    _load_local_water_index's docstring for the real numbers).
+    """
+    n_rows, n_cols = len(lats), len(lons)
+    if merged_geometry is None:
+        return np.zeros((n_rows, n_cols), dtype=bool)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+    return shapely.contains_xy(merged_geometry, lon_grid, lat_grid)
 
 
 def apply_water_mask(cost_arrays: dict, water_mask: np.ndarray) -> dict:
@@ -952,8 +1010,26 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
         water_lookup_s = time.time() - t_overpass_start
 
         t_mask_start = time.time()
-        water_mask = build_water_mask(water_polygons, lats, lons)
-        stream_mask = build_stream_proximity_mask(stream_lines, lats, lons)
+        # By the time overpass_future has resolved, _load_local_water_index()
+        # has already run as a side effect of get_water_and_stream_geometries
+        # -> query_local_water_data, so _local_water_index is safe to read
+        # here directly. If it's populated, use the precomputed global
+        # unions (fast path — see _load_local_water_index's docstring for
+        # why this matters, confirmed with real production numbers). If
+        # it's None, the local dataset isn't available and this request
+        # fell back to live Overpass — there's no precomputed global union
+        # for an arbitrary per-request Overpass result, so union fresh,
+        # exactly as before.
+        if _local_water_index is not None:
+            water_mask = rasterize_precomputed_geometry(
+                _local_water_index["global_water_union"], lats, lons
+            )
+            stream_mask = rasterize_precomputed_geometry(
+                _local_water_index["global_stream_buffer_union"], lats, lons
+            )
+        else:
+            water_mask = build_water_mask(water_polygons, lats, lons)
+            stream_mask = build_stream_proximity_mask(stream_lines, lats, lons)
         mask_compute_s = time.time() - t_mask_start
 
         n_water_features = len(water_polygons)
@@ -1117,31 +1193,165 @@ def choose_cell_size_for_budget(bbox: tuple[float, float, float, float],
     return max(MIN_CELL_SIZE_M, min(MAX_CELL_SIZE_M, cell_size_m))
 
 
+def _check_walkable_connectivity(water_mask, start_rc: tuple[int, int],
+                                   goal_rc: tuple[int, int]) -> bool:
+    """
+    Ignores cost entirely — floods outward from start_rc across any
+    non-water cell and checks whether goal_rc is ever reached. Used only
+    as a diagnostic once all padding-expansion attempts in
+    route_any_two_points have failed: it distinguishes "these two points
+    are genuinely cut off from each other by water within the search
+    area" (most likely open ocean — a real geography limit, worth
+    reporting plainly) from "something else is wrong" (land does connect
+    them, so a bare 'no path found' would be misleading). Same technique
+    validated earlier on the Lake Manapouri case, where it correctly
+    distinguished a real geography limit from a bug.
+    """
+    from collections import deque
+
+    if water_mask is None:
+        return True  # no water data at all — connectivity isn't the question here
+
+    n_rows, n_cols = water_mask.shape
+    if water_mask[start_rc] or water_mask[goal_rc]:
+        return False
+
+    visited = np.zeros_like(water_mask, dtype=bool)
+    visited[start_rc] = True
+    queue = deque([start_rc])
+
+    while queue:
+        i, j = queue.popleft()
+        if (i, j) == goal_rc:
+            return True
+        for di in (-1, 0, 1):
+            for dj in (-1, 0, 1):
+                if di == 0 and dj == 0:
+                    continue
+                ni, nj = i + di, j + dj
+                if (0 <= ni < n_rows and 0 <= nj < n_cols
+                        and not visited[ni, nj] and not water_mask[ni, nj]):
+                    visited[ni, nj] = True
+                    queue.append((ni, nj))
+
+    return False
+
+
 def route_any_two_points(waypoint_a: tuple[float, float],
                            waypoint_b: tuple[float, float],
                            node_budget: int = DEFAULT_NODE_BUDGET,
-                           padding_frac: float = 0.3) -> dict:
-    """Performs a free search between two waypoints anywhere in New Zealand, building a bounding box and grid sized to the query."""
-    bbox = compute_dynamic_bbox(waypoint_a, waypoint_b, padding_frac)
-    cell_size_m = choose_cell_size_for_budget(bbox, node_budget)
+                           padding_frac: float = 0.3,
+                           max_padding_attempts: int = 3,
+                           padding_growth: float = 2.0,
+                           max_attempt_seconds: float = 45.0) -> dict:
+    """
+    Performs a free search between two waypoints anywhere in New Zealand,
+    building a bounding box and grid sized to the query.
 
-    min_lat, min_lon, max_lat, max_lon = bbox
-    mid_lat = (min_lat + max_lat) / 2
-    m_per_deg_lat, m_per_deg_lon = meters_per_degree(mid_lat)
-    bbox_height_km = abs(max_lat - min_lat) * m_per_deg_lat / 1000
-    bbox_width_km = abs(max_lon - min_lon) * m_per_deg_lon / 1000
+    If no path is found, the search area is retried with progressively
+    larger padding (multiplied by padding_growth each time, up to
+    max_padding_attempts total tries) before giving up. This matters for
+    routes that need a genuinely large detour — around a harbour,
+    peninsula, or inlet — where the default padding is enough for normal
+    inland ridge-avoidance but nowhere near enough to see the way around
+    a large body of water. Each retry only happens for the routes that
+    actually need it; a normal inland route still succeeds on the first,
+    cheap, tightly-bounded attempt.
 
-    print(f"Query bbox: {bbox_height_km:.1f}km x {bbox_width_km:.1f}km, "
-          f"cell size chosen: {cell_size_m:.1f}m")
-    if cell_size_m > 100:
-        print(f"NOTE: cell size {cell_size_m:.0f}m is too coarse to resolve real "
-              f"trail-scale terrain — treat this route as a rough estimate only.")
+    TIME-BASED CIRCUIT BREAKER: if a single attempt takes longer than
+    max_attempt_seconds, the loop stops expanding rather than retrying
+    with an even bigger, even more expensive search area. This was added
+    after a real case — a long cross-country query whose bbox happened to
+    pull in a large number of complex ocean coastline polygons — took
+    120s on attempt 1, 370s on attempt 2, and crashed the machine on
+    attempt 3. The exact cause of that scaling wasn't fully pinned down
+    (candidates: polygon count/complexity in the water mask union,
+    possibly interaction with how the split ocean chunks overlap at their
+    seams — see prefetch_nz_water_data.py), but this breaker bounds the
+    worst case regardless of the precise mechanism: total time is capped
+    at roughly max_padding_attempts * max_attempt_seconds, not unbounded.
 
-    grid_state = build_grid_state(bbox, cell_size_m)
-    result = route_between_waypoints(grid_state, waypoint_a, waypoint_b)
-    result["bbox_used"] = bbox
-    result["cell_size_m_used"] = cell_size_m
-    return result
+    Once all attempts are exhausted (either by count or by hitting the
+    time limit), a connectivity check (ignoring cost, just "is there any
+    walkable path at all") determines whether the final error message
+    reports a genuine geography limit (most likely open ocean) or a real
+    bug worth investigating.
+    """
+    current_padding = padding_frac
+    last_result = None
+    last_grid_state = None
+
+    for attempt in range(1, max_padding_attempts + 1):
+        bbox = compute_dynamic_bbox(waypoint_a, waypoint_b, current_padding)
+        cell_size_m = choose_cell_size_for_budget(bbox, node_budget)
+
+        min_lat, min_lon, max_lat, max_lon = bbox
+        mid_lat = (min_lat + max_lat) / 2
+        m_per_deg_lat, m_per_deg_lon = meters_per_degree(mid_lat)
+        bbox_height_km = abs(max_lat - min_lat) * m_per_deg_lat / 1000
+        bbox_width_km = abs(max_lon - min_lon) * m_per_deg_lon / 1000
+
+        print(f"Attempt {attempt}/{max_padding_attempts} — padding={current_padding:.2f}, "
+              f"bbox: {bbox_height_km:.1f}km x {bbox_width_km:.1f}km, "
+              f"cell size: {cell_size_m:.1f}m")
+        if cell_size_m > 100:
+            print(f"NOTE: cell size {cell_size_m:.0f}m is too coarse to resolve real "
+                  f"trail-scale terrain — treat this route as a rough estimate only.")
+
+        t_attempt_start = time.time()
+        grid_state = build_grid_state(bbox, cell_size_m)
+        result = route_between_waypoints(grid_state, waypoint_a, waypoint_b)
+        attempt_seconds = time.time() - t_attempt_start
+
+        if result["ok"]:
+            result["bbox_used"] = bbox
+            result["cell_size_m_used"] = cell_size_m
+            result["padding_frac_used"] = current_padding
+            if attempt > 1:
+                print(f"Route found on attempt {attempt} after expanding padding "
+                      f"to {current_padding:.2f}.")
+            return result
+
+        last_result = result
+        last_grid_state = grid_state
+
+        if attempt_seconds > max_attempt_seconds:
+            print(f"Attempt {attempt} took {attempt_seconds:.1f}s, over the "
+                  f"{max_attempt_seconds:.0f}s circuit-breaker limit — stopping here "
+                  f"rather than retrying with an even bigger, even more expensive "
+                  f"search area.")
+            break
+
+        if attempt < max_padding_attempts:
+            print(f"Attempt {attempt} found no path ({attempt_seconds:.1f}s) — "
+                  f"expanding the search area and retrying.")
+        current_padding *= padding_growth
+
+    # All attempts exhausted (by count or by the time breaker) — diagnose
+    # rather than return a bare failure.
+    lats, lons = last_grid_state["lats"], last_grid_state["lons"]
+    start_rc = find_nearest_rc(lats, lons, waypoint_a[0], waypoint_a[1])
+    goal_rc = find_nearest_rc(lats, lons, waypoint_b[0], waypoint_b[1])
+    connected = _check_walkable_connectivity(last_grid_state.get("water_mask"), start_rc, goal_rc)
+
+    if connected:
+        error_msg = (
+            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
+            f"before stopping), but a connectivity check confirms land "
+            f"DOES connect these two points within the final search area — this points to a "
+            f"real bug in the search or cost arrays, not a genuine geography limit."
+        )
+    else:
+        error_msg = (
+            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
+            f"before stopping). A connectivity check confirms these two "
+            f"points are genuinely separated by water within the final search area — most "
+            f"likely open ocean, or a detour larger than this many rounds of padding "
+            f"expansion can reach."
+        )
+
+    print(error_msg)
+    return {"ok": False, "error": error_msg}
 
 
 def route_via_waypoints(waypoints: list[tuple[float, float]],
