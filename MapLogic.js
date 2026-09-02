@@ -273,6 +273,7 @@ document
   let markerB = null;
   let routeLoading = false;
   let currentRouteFeature = null;
+  let currentRouteGPX = null;
 
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
@@ -323,6 +324,7 @@ function clearRouteLine() {
     map.removeSource('route');
   }
   currentRouteFeature = null;
+  currentRouteGPX = null;
 
   if (exportGPXBtn) {
   exportGPXBtn.disabled = true;
@@ -673,6 +675,7 @@ generateRouteBtn.addEventListener('click', async () => {
       // DRAW ROUTE
       // ------------------------------------------------
       drawRoute(data.route);
+      currentRouteGPX = data.gpx || null;
 
       // ------------------------------------------------
       // DISPLAY ROUTE STATISTICS
@@ -727,31 +730,20 @@ generateRouteBtn.addEventListener('click', async () => {
   }
 );
 
+// ========================================================================
+// EXPORT GPX
+// ========================================================================
+// Downloads the exact GPX file the backend already generated for the
+// current route (route_to_gpx() in route_generator.py
+
 function downloadGPX() {
-  if (!currentRouteFeature) {
+  if (!currentRouteGPX) {
     routeErrorEl.textContent = 'Generate a route before exporting GPX.';
     routeErrorEl.hidden = false;
     return;
   }
 
-  const coords = currentRouteFeature.geometry.coordinates;
-
-  const trackPoints = coords.map(([lon, lat, ele]) => {
-    const elevation = ele !== undefined ? `<ele>${ele}</ele>` : '';
-    return `      <trkpt lat="${lat}" lon="${lon}">${elevation}</trkpt>`;
-  }).join('\n');
-
-  const gpx = `<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="RidgeWalker" xmlns="http://www.topografix.com/GPX/1/1">
-  <trk>
-    <name>RidgeWalker Route</name>
-    <trkseg>
-${trackPoints}
-    </trkseg>
-  </trk>
-</gpx>`;
-
-  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const blob = new Blob([currentRouteGPX], { type: 'application/gpx+xml' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
 
