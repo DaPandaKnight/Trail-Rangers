@@ -1340,7 +1340,7 @@ def route_any_two_points(waypoint_a: tuple[float, float],
         )
     else:
         error_msg = (
-            f"No path found. We believe this path is disconnected by water."
+            f"No path found. This path may be disconnected by water."
         )
 
     print(error_msg)
