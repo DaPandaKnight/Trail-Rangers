@@ -1243,7 +1243,7 @@ def route_any_two_points(waypoint_a: tuple[float, float],
                            padding_frac: float = 0.3,
                            max_padding_attempts: int = 3,
                            padding_growth: float = 2.0,
-                           max_attempt_seconds: float = 45.0) -> dict:
+                           max_attempt_seconds: float = 39.0) -> dict:
     """
     Performs a free search between two waypoints anywhere in New Zealand,
     building a bounding box and grid sized to the query.
@@ -1336,18 +1336,11 @@ def route_any_two_points(waypoint_a: tuple[float, float],
 
     if connected:
         error_msg = (
-            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
-            f"before stopping), but a connectivity check confirms land "
-            f"DOES connect these two points within the final search area — this points to a "
-            f"real bug in the search or cost arrays, not a genuine geography limit."
+            f"No path found."
         )
     else:
         error_msg = (
-            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
-            f"before stopping). A connectivity check confirms these two "
-            f"points are genuinely separated by water within the final search area — most "
-            f"likely open ocean, or a detour larger than this many rounds of padding "
-            f"expansion can reach."
+            f"No path found. We believe this path is disconnected by water."
         )
 
     print(error_msg)
