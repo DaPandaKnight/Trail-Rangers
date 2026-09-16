@@ -242,22 +242,24 @@ document
   document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
 
   // ── Route planner ────────────────────────────────────────────────────────
-  // Drop a start/end pin with a button (places it at the current map
-  // center), then drag it to fine-tune. Markers own their own drag
-  // gesture (MapLibre disables map panning while a marker drag is in
-  // progress), so this sidesteps any conflict with the map's own
-  // click-and-drag panning — a plain map click was unreliable for this.
+  // Add the ability to have multiple waypoints, waypoints will now be stored in an array
+  // Each point will have a role assigned to it (start, end, via) and the role will be assigned based
+  // on the position of the waypoint on the array. this will make adding and removing waypoints more seamlessly
+  // Add waypoint button will add waypoints on the map and the points will be displayed on the side panel 
+  // Each pin owns its own drag gesture
+  // (MapLibre disables map panning while a marker drag is in progress), so
+  // this sidesteps any conflict with the map's own click-and-drag panning.
 
-  const START_COLOR = '#ff8400'; // matches --accent
-  const END_COLOR   = '#2fd4a0'; // matches --accent2
+  const START_COLOR = '#e2660a'; // matches --accent
+  const END_COLOR   = '#178f66'; // matches --accent2
+  const VIA_COLOR   = '#c9832a'; // matches --via
+  const PREVIEW_LINE_COLOR = '#7a7266'; // matches --muted — marks it as a straight preview, not a real route
+
+  const MAX_WAYPOINTS = 5;
 
   const routeHintEl      = document.getElementById('route-hint');
-  const pointADotEl      = document.getElementById('point-a-dot');
-  const pointBDotEl      = document.getElementById('point-b-dot');
-  const pointACoordsEl   = document.getElementById('point-a-coords');
-  const pointBCoordsEl   = document.getElementById('point-b-coords');
-  const placeStartBtn    = document.getElementById('place-start');
-  const placeEndBtn      = document.getElementById('place-end');
+  const routePointsEl    = document.getElementById('route-points');
+  const addWaypointBtn   = document.getElementById('add-waypoint');
   const generateRouteBtn = document.getElementById('generate-route');
   const clearRouteBtn    = document.getElementById('clear-route');
   const routeStatsEl     = document.getElementById('route-stats');
@@ -267,10 +269,10 @@ document
   const routeErrorEl     = document.getElementById('route-error');
   const exportGPXBtn     = document.getElementById('export-gpx');
 
-  let pointA = null;       // [lon, lat]
-  let pointB = null;       // [lon, lat]
-  let markerA = null;
-  let markerB = null;
+  // main array to store all waypoints 
+  // instead of having a fixed start and end point, the waypoints will be assigned a role (start, end, via)
+  // the roles will be assigned based on the point's position in the array 
+  let waypoints = [];  
   let routeLoading = false;
   let currentRouteFeature = null;
   let currentRouteGPX = null;
@@ -285,6 +287,25 @@ document
     return `${h}h ${m}m`;
   }
 
+  function roleForIndex(i, total) {
+    if (i === 0) return 'start';
+    if (i === total - 1) return 'end';
+    return 'via';
+  }
+
+  function labelForIndex(i, total) {
+    const role = roleForIndex(i, total);
+    if (role === 'start') return 'Start';
+    if (role === 'end') return 'End';
+    return `Via ${i}`;
+  }
+
+  function colorForRole(role) {
+    if (role === 'start') return START_COLOR;
+    if (role === 'end') return END_COLOR;
+    return VIA_COLOR;
+  }
+
 
 // ========================================================================
 // ROUTE HINT
@@ -294,18 +315,26 @@ function updateRouteHint() {
 
   if (routeLoading) {return;}
 
-  if (!pointA &&!pointB) {
-    routeHintEl.textContent ='Drop a start and end pin, then drag to fine-tune';
-    }
-  else if (!pointA) {
-    routeHintEl.textContent = 'Drop a start pin, then drag it into place';
-    }
-  else if (!pointB) {
-    routeHintEl.textContent = 'Drop an end pin, then drag it into place';
-    }
-  else {
+  if (waypoints.length === 0) {
+    routeHintEl.textContent = 'Add at least two waypoints to plan a route';
+  } else if (waypoints.length === 1) {
+    routeHintEl.textContent = 'Add an end waypoint, then drag pins to fine-tune';
+  } else if (waypoints.length === 2) {
     routeHintEl.textContent = 'Ready — hit Generate Route (drag pins anytime to adjust)';
-    }
+  } else {
+    routeHintEl.textContent =
+      `${waypoints.length} waypoints connected.`;
+  }
+}
+
+function updateGenerateButton() {
+  generateRouteBtn.disabled = waypoints.length !== 2 || routeLoading;
+}
+
+function updateAddButton() {
+  const atMax = waypoints.length >= MAX_WAYPOINTS;
+  addWaypointBtn.disabled = atMax || routeLoading;
+  addWaypointBtn.textContent = atMax ? `Max ${MAX_WAYPOINTS} Waypoints` : '+ Add Waypoint';
 }
 
 
@@ -333,106 +362,139 @@ function clearRouteLine() {
 
 
 // ========================================================================
+// STRAIGHT-LINE WAYPOINT PREVIEW (client-side only, no backend call)
+// ========================================================================
+
+function drawWaypointPreview() {
+  if (waypoints.length < 2) {
+    removeWaypointPreview();
+    return;
+  }
+
+  const geojson = {
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates: waypoints.map(wp => wp.lngLat) },
+  };
+
+  if (map.getSource('waypoint-preview')) {
+    map.getSource('waypoint-preview').setData(geojson);
+  } else {
+    map.addSource('waypoint-preview', { type: 'geojson', data: geojson });
+    map.addLayer({
+      id: 'waypoint-preview-line',
+      type: 'line',
+      source: 'waypoint-preview',
+      layout: { 'line-join': 'round', 'line-cap': 'round' },
+      paint: {
+        'line-color': PREVIEW_LINE_COLOR,
+        'line-width': 2.5,
+        'line-dasharray': [2, 2],
+        'line-opacity': 0.85,
+      },
+    });
+  }
+}
+
+function removeWaypointPreview() {
+  if (map.getLayer('waypoint-preview-line')) map.removeLayer('waypoint-preview-line');
+  if (map.getSource('waypoint-preview')) map.removeSource('waypoint-preview');
+}
+
+
+// ========================================================================
 // INVALIDATE EXISTING ROUTE
 // ========================================================================
 
 function invalidateRoute() {
   clearRouteLine();
+  drawWaypointPreview();
   routeStatsEl.hidden = true;
   routeErrorEl.hidden = true;
 }
 
 
 // ========================================================================
-// UPDATE PIN DISPLAY
+// WAYPOINT LIST — PANEL ROWS + MAP MARKERS
 // ========================================================================
 
-function setPointDisplay(which,lng,lat) {
+function renderWaypointRows() {
+  routePointsEl.innerHTML = '';
 
-  const dotEl = which === 'start'
-      ? pointADotEl
-      : pointBDotEl;
+  waypoints.forEach((wp, i) => {
+    const role = roleForIndex(i, waypoints.length);
 
-  const coordinatesEl =which === 'start'
-      ? pointACoordsEl
-      : pointBCoordsEl;
+    const row = document.createElement('div');
+    row.className = 'route-point-row';
 
-  coordinatesEl.textContent = formatCoords(lng,lat);
+    const dot = document.createElement('span');
+    dot.className = `point-dot point-dot-${role} is-set`;
 
-  coordinatesEl.classList.add('is-set');
+    const label = document.createElement('span');
+    label.className = 'point-label';
+    label.textContent = labelForIndex(i, waypoints.length);
 
-  dotEl.classList.add('is-set');
+    const coords = document.createElement('span');
+    coords.className = 'point-coords is-set';
+    coords.textContent = formatCoords(wp.lngLat[0], wp.lngLat[1]);
+
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'point-remove';
+    remove.title = 'Remove waypoint';
+    remove.textContent = '×';
+    remove.addEventListener('click', () => { if (!routeLoading) removeWaypoint(i); });
+
+    row.append(dot, label, coords, remove);
+    routePointsEl.appendChild(row);
+  });
 }
 
+// Recreates every marker so start/via/end colors stay correct after a
+// waypoint is added or removed (adding/removing can shift which
+// waypoints count as "end" vs "via").
+function rebuildMarkers() {
+  waypoints.forEach((wp, i) => {
+    if (wp.marker) wp.marker.remove();
 
-// ========================================================================
-// PLACE START / END PIN
-// ========================================================================
+    const role = roleForIndex(i, waypoints.length);
+    const marker = new maplibregl.Marker({ color: colorForRole(role), draggable: true })
+      .setLngLat(wp.lngLat)
+      .addTo(map);
 
-function placePin(which) {
+    marker.on('drag', () => {
+      const ll = marker.getLngLat();
+      wp.lngLat = [ll.lng, ll.lat];
+      renderWaypointRows();
+      invalidateRoute();
+    });
 
+    wp.marker = marker;
+  });
+}
+
+function addWaypointAtCenter() {
+  if (waypoints.length >= MAX_WAYPOINTS) return;
   const center = map.getCenter();
-  const lngLat = [center.lng, center.lat];
+  waypoints.push({ lngLat: [center.lng, center.lat], marker: null });
 
-
-  // ── START ──────────────────────────────────────────────────────────────
-
-  if (which === 'start') {
-    pointA = lngLat;
-
-    if (markerA) {
-      markerA.setLngLat(lngLat);
-
-    } else {
-      markerA =new maplibregl.Marker({
-          color:START_COLOR,
-          draggable:true})
-          .setLngLat(lngLat)
-          .addTo(map);
-
-      markerA.on('drag',() => {
-          const ll = markerA.getLngLat();
-          pointA = [ll.lng, ll.lat];
-          setPointDisplay('start', ll.lng, ll.lat);
-          invalidateRoute();
-        });
-    }
-    setPointDisplay('start', lngLat[0],lngLat[1]);
-  }
-
-  // ── END ────────────────────────────────────────────────────────────────
-
-  else {
-    pointB = lngLat;
-
-    if (markerB) {
-      markerB.setLngLat(lngLat);
-
-    } else {
-      markerB = new maplibregl.Marker({
-          color:END_COLOR,
-          draggable: true})
-          .setLngLat(lngLat)
-          .addTo(map);
-
-      markerB.on('drag',() => {
-          const ll =markerB.getLngLat();
-          pointB = [ ll.lng,ll.lat];
-          setPointDisplay('end',ll.lng,ll.lat);
-          invalidateRoute();
-        }
-      );
-    }
-    setPointDisplay('end',lngLat[0],lngLat[1]);
-  }
-
-  // Moving a pin removes the existing route
+  rebuildMarkers();
+  renderWaypointRows();
   invalidateRoute();
+  updateGenerateButton();
+  updateAddButton();
+  updateRouteHint();
+}
 
-  // Generate becomes available when
-  // both points have been selected
-  generateRouteBtn.disabled = !(pointA && pointB);
+function removeWaypoint(index) {
+  const wp = waypoints[index];
+  if (wp.marker) wp.marker.remove();
+  waypoints.splice(index, 1);
 
+  rebuildMarkers();
+  renderWaypointRows();
+  invalidateRoute();
+  updateGenerateButton();
+  updateAddButton();
   updateRouteHint();
 }
 
@@ -442,32 +504,16 @@ function placePin(which) {
 // ========================================================================
 
 function resetRoute() {
-
-  pointA =null;
-  pointB =null;
-
-  if (markerA) {
-    markerA.remove();
-    markerA =null;
-  }
-
-  if (markerB) {
-    markerB.remove();
-    markerB = null;
-  }
+  waypoints.forEach(wp => { if (wp.marker) wp.marker.remove(); });
+  waypoints = [];
 
   clearRouteLine();
-
-  pointADotEl.classList.remove('is-set');
-  pointBDotEl.classList.remove('is-set');
-  pointACoordsEl.classList.remove('is-set');
-  pointBCoordsEl.classList.remove('is-set');
-  pointACoordsEl.textContent = 'Not set';
-  pointBCoordsEl.textContent ='Not set';
+  removeWaypointPreview();
+  renderWaypointRows();
   routeStatsEl.hidden = true;
   routeErrorEl.hidden = true;
-  generateRouteBtn.disabled = true;
-
+  updateGenerateButton();
+  updateAddButton();
   updateRouteHint();
 }
 
@@ -481,8 +527,11 @@ function drawRoute(routeFeature) {
     type:'FeatureCollection',
     features: [routeFeature]
   };
-  
+
   currentRouteFeature = routeFeature;
+
+  // The real backend route replaces the straight-line preview.
+  removeWaypointPreview();
 
 if (exportGPXBtn) {
   exportGPXBtn.disabled = false;
@@ -559,21 +608,13 @@ if (exportGPXBtn) {
 
 
 // ========================================================================
-// PIN BUTTONS
+// ADD WAYPOINT
 // ========================================================================
 
-placeStartBtn.addEventListener('click',
+addWaypointBtn.addEventListener('click',
   () => {
     if (!routeLoading) {
-      placePin('start');
-    }
-  }
-);
-
-
-placeEndBtn.addEventListener('click',
-  () => {
-    if (!routeLoading) {placePin('end');
+      addWaypointAtCenter();
     }
   }
 );
@@ -584,31 +625,28 @@ placeEndBtn.addEventListener('click',
 // ========================================================================
 
 generateRouteBtn.addEventListener('click', async () => {
-    if (!pointA ||!pointB ||routeLoading) {
+    if (waypoints.length !== 2 || routeLoading) {
       return;
     }
+
+    const pointA = waypoints[0].lngLat;
+    const pointB = waypoints[1].lngLat;
+
     // --------------------------------------------------
     // SHOW LOADING SCREEN
     // --------------------------------------------------
 
     showLoadingScreen();
     routeLoading =true;
-    generateRouteBtn.disabled =true;
+    updateGenerateButton();
+    updateAddButton();
     generateRouteBtn.textContent ='Calculating…';
     clearRouteBtn.disabled = true;
-    placeStartBtn.disabled =true;
-    placeEndBtn.disabled = true;
     if (exportGPXBtn) {
       exportGPXBtn.disabled =true;
     }
 
-    if (markerA) {
-      markerA.setDraggable(false);
-    }
-
-    if (markerB) {
-      markerB.setDraggable(false);
-    }
+    waypoints.forEach(wp => { if (wp.marker) wp.marker.setDraggable(false); });
 
     routeErrorEl.hidden = true;
     routeStatsEl.hidden =true;
@@ -709,23 +747,14 @@ generateRouteBtn.addEventListener('click', async () => {
       hideLoadingScreen();
       routeLoading =false;
 
-      generateRouteBtn.disabled = !(pointA && pointB);
+      updateGenerateButton();
+      updateAddButton();
 
       generateRouteBtn.textContent ='Generate Route';
 
       clearRouteBtn.disabled = false;
 
-      placeStartBtn.disabled = false;
-
-      placeEndBtn.disabled = false;
-
-      if (markerA) {
-        markerA.setDraggable(true);
-      }
-
-      if (markerB) {
-        markerB.setDraggable(true);
-      }
+      waypoints.forEach(wp => { if (wp.marker) wp.marker.setDraggable(true); });
     }
   }
 );
