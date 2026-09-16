@@ -252,7 +252,7 @@ document
 
   const START_COLOR = '#e2660a'; // matches --accent
   const END_COLOR   = '#178f66'; // matches --accent2
-  const VIA_COLOR   = '#c9832a'; // matches --via
+  const VIA_COLOR   = '#2f6fed'; // matches --via
   const PREVIEW_LINE_COLOR = '#7a7266'; // matches --muted — marks it as a straight preview, not a real route
 
   const MAX_WAYPOINTS = 5;

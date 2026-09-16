@@ -9,7 +9,7 @@
   --border:   #ddd2b8;
   --accent:   #e2660a;
   --accent2:  #178f66;
-  --via:      #c9832a;
+  --via:      #2f6fed;
   --text:     #2b2620;
   --muted:    #7a7266;
   --radius:   10px;
@@ -101,12 +101,11 @@ input[type=range]::-webkit-slider-thumb {
   border: 1.5px solid var(--border);
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
 }
-.point-dot-start.is-set { background: var(--accent);  border-color: var(--accent);  box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
-.point-dot-end.is-set   { background: var(--accent2); border-color: var(--accent2); box-shadow: 0 0 6px color-mix(in srgb, var(--accent2) 70%, transparent); }
+.point-dot-start.is-set { background: var(--accent);  border-color: var(--accent); }
+.point-dot-end.is-set   { background: var(--accent2); border-color: var(--accent2); }
 .point-dot-via.is-set {
   background: var(--via);
   border-color: var(--via);
-  box-shadow: 0 0 6px color-mix(in srgb, var(--via) 70%, transparent);
 }
 
 .point-label { font-size: 0.92rem; color: var(--muted); min-width: 42px; }
