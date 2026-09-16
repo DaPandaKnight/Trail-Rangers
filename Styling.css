@@ -185,16 +185,28 @@ input[type=range]::-webkit-slider-thumb {
   line-height: 1.4;
 }
 
-/* Zoom buttons */
-.zoom-row { display: flex; gap: 10px; }
-.zoom-btn {
-  flex: 1; padding: 15px 0; font-family: 'DM Mono', monospace;
-  font-size: 1.4rem; font-weight: 500;
-  background: var(--panel); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  cursor: pointer; transition: background 0.15s, border-color 0.15s;
+/* Floating zoom controls — top-right of the map */
+.map-zoom-controls {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
-.zoom-btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
+.map-zoom-btn {
+  width: 36px; height: 36px;
+  font-family: 'DM Mono', monospace;
+  font-size: 1.15rem; font-weight: 500;
+  background: rgba(var(--panel-rgb), 0.92);
+  backdrop-filter: blur(16px);
+  color: var(--text);
+  border: 1px solid var(--border); border-radius: 14px;
+  box-shadow: 0 4px 16px rgba(80, 60, 30, 0.12);
+  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.map-zoom-btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
 
 /* Coordinates Box */
 .coord-display {
@@ -396,13 +408,6 @@ label:focus-visible,
     background: var(--accent);
   }
 
-  /* Larger zoom controls */
-  .zoom-btn {
-    min-height: 44px;
-    padding: 10px 0;
-    font-size: 1.1rem;
-  }
-
   /* Larger route controls */
   .btn-primary, .btn-secondary {
     min-height: 44px;
@@ -482,13 +487,13 @@ label:focus-visible,
 
 /* Remove hover-only behaviour on touch devices */
 @media (hover: none) {
-  .zoom-btn:hover {
-    background: var(--panel);
+  .map-zoom-btn:hover {
+    background: rgba(var(--panel-rgb), 0.92);
     border-color: var(--border);
     color: var(--text);
   }
 
-  .zoom-btn:active {
+  .map-zoom-btn:active {
     background: var(--border);
     border-color: var(--accent);
     color: var(--accent);
