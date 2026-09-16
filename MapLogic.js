@@ -306,6 +306,22 @@ document
     return VIA_COLOR;
   }
 
+  // displays the error message in a more readable way for users
+  // instead of coordinates, display the name of the points that have errors instead
+  function friendlyRouteError(message) {
+    if (typeof message !== 'string') return message;
+
+    const match = message.match(/^Leg (\d+) \(.+\) failed: (.+)$/s);
+    if (!match) return message;
+
+    const routeIndex = parseInt(match[1], 10) - 1;
+    const reason = match[2];
+    const fromLabel = labelForIndex(routeIndex, waypoints.length);
+    const toLabel = labelForIndex(routeIndex + 1, waypoints.length);
+
+    return `${fromLabel} → ${toLabel} failed: ${reason}`;
+  }
+
 
 // ========================================================================
 // ROUTE HINT
@@ -323,12 +339,12 @@ function updateRouteHint() {
     routeHintEl.textContent = 'Ready — hit Generate Route (drag pins anytime to adjust)';
   } else {
     routeHintEl.textContent =
-      `${waypoints.length} waypoints connected.`;
+      `Ready — hit Generate Route to path through all ${waypoints.length} waypoints.`;
   }
 }
 
 function updateGenerateButton() {
-  generateRouteBtn.disabled = waypoints.length !== 2 || routeLoading;
+  generateRouteBtn.disabled = waypoints.length < 2 || routeLoading;
 }
 
 function updateAddButton() {
@@ -449,9 +465,9 @@ function renderWaypointRows() {
   });
 }
 
-// Recreates every marker so start/via/end colors stay correct after a
-// waypoint is added or removed (adding/removing can shift which
-// waypoints count as "end" vs "via").
+// this function is to change the color of pin when its role is changed
+// might need to rethink how to do this if where to scale into more waypoints as this is not very efficient
+// but works for right now so I will keep it this way
 function rebuildMarkers() {
   waypoints.forEach((wp, i) => {
     if (wp.marker) wp.marker.remove();
@@ -472,6 +488,7 @@ function rebuildMarkers() {
   });
 }
 
+// add and remove waypoint functions 
 function addWaypointAtCenter() {
   if (waypoints.length >= MAX_WAYPOINTS) return;
   const center = map.getCenter();
@@ -625,12 +642,13 @@ addWaypointBtn.addEventListener('click',
 // ========================================================================
 
 generateRouteBtn.addEventListener('click', async () => {
-    if (waypoints.length !== 2 || routeLoading) {
+    if (waypoints.length < 2 || routeLoading) {
       return;
     }
 
     const pointA = waypoints[0].lngLat;
-    const pointB = waypoints[1].lngLat;
+    const pointB = waypoints[waypoints.length - 1].lngLat;
+    const viaPoints = waypoints.slice(1, -1).map(wp => wp.lngLat);
 
     // --------------------------------------------------
     // SHOW LOADING SCREEN
@@ -678,7 +696,7 @@ generateRouteBtn.addEventListener('click', async () => {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
             body:
-              JSON.stringify({a: pointA,b: pointB}),
+              JSON.stringify({a: pointA, b: pointB, via: viaPoints}),
             signal:controller.signal
           }
         );
@@ -723,16 +741,14 @@ generateRouteBtn.addEventListener('click', async () => {
       statTimeEl.textContent = formatDuration(data.estimated_hours);
       statClimbEl.textContent = `${Math.round(data.climb_m)} m`;
       routeStatsEl.hidden = false;
-      routeHintEl.textContent = 'Route generated. Drag either pin to plan a new route.';
-    
+      routeHintEl.textContent = 'Route generated. Drag any pin to plan a new route.';
+
     } catch (error) {
       clearTimeout(timeoutId);
 
       const message =error.name ==='AbortError'
-          ? 'The route request timed out. Try two points that are closer together.'
-          : (
-              error.message ||'Something went wrong generating the route.'
-            );
+          ? 'The route request timed out. Try waypoints that are closer together.'
+          : friendlyRouteError(error.message ||'Something went wrong generating the route.');
 
       routeErrorEl.textContent =message;
       routeErrorEl.hidden =false;
