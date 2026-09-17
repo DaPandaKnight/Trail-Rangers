@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Syne:wght@600;700;800&display=swap');
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -84,6 +84,62 @@ input[type=range]::-webkit-slider-thumb {
   box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent);
 }
 
+/* Route mode switch — segmented control (2-Point vs Multi-Stop) */
+.mode-switch {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.mode-option {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 6px 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: 'DM Mono', monospace;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.mode-option:hover { border-color: color-mix(in srgb, var(--accent2) 60%, var(--border)); }
+
+.mode-option.is-active {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel));
+  border-color: var(--accent);
+}
+
+.mode-option .mode-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  transition: color 0.15s;
+}
+
+.mode-option.is-active .mode-label { color: var(--accent); }
+
+.mode-option .mode-path {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke 0.15s;
+}
+
+.mode-option.is-active .mode-path { stroke: var(--muted); }
+
+.mode-option .mode-dot { fill: var(--border); transition: fill 0.15s; }
+
+.mode-option.is-active .mode-dot-start { fill: var(--accent); }
+.mode-option.is-active .mode-dot-end   { fill: var(--accent2); }
+.mode-option.is-active .mode-dot-via   { fill: var(--via); }
+
 /* Route planner */
 .route-hint {
   font-size: 0.9rem;
@@ -92,8 +148,48 @@ input[type=range]::-webkit-slider-thumb {
   margin-bottom: 10px;
 }
 
-.route-points { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
-.route-point-row { display: flex; align-items: center; gap: 10px; }
+.route-points { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+
+.route-point-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  position: relative;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+}
+.route-point-row[hidden] { display: none; }
+
+.route-points[hidden] { display: none; }
+
+/* Via rows are reorderable — drag the whole cell */
+.route-point-row.is-via {
+  cursor: grab;
+  touch-action: none;
+}
+
+/* Dragging highlights the cell in place — it never actually follows the
+   pointer, since moving the row around makes it hard to see the list. */
+.route-point-row.is-via.is-dragging {
+  cursor: grabbing;
+  border-color: var(--via);
+  background: color-mix(in srgb, var(--via) 10%, var(--panel));
+  box-shadow: 0 2px 10px rgba(80, 60, 30, 0.12);
+}
+
+/* Thin line shown between cells at the spot a dragged via would land */
+.waypoint-drop-indicator {
+  position: fixed;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--via);
+  pointer-events: none;
+  z-index: 20;
+  display: none;
+}
 
 .point-dot {
   width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
@@ -131,6 +227,8 @@ input[type=range]::-webkit-slider-thumb {
 .route-actions { display: flex; gap: 14px; margin-bottom: 14px; }
 .route-actions:last-of-type { margin-bottom: 0; }
 
+#mode-fixed, #mode-multi { margin-bottom: 10px; }
+
 .btn-primary, .btn-secondary {
   flex: 1;
   min-height: 48px;
@@ -142,6 +240,23 @@ input[type=range]::-webkit-slider-thumb {
   border-radius: 6px;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+/* This one sits directly in #panel (a column flex layout), not inside a
+   .route-actions row, so flex:1 there would grow it vertically instead of
+   sharing width — pin it back to its own content height. */
+#export-gpx { flex: none; }
+
+/* Draws the eye to Export once a route has just been generated */
+#export-gpx.is-ready {
+  border-color: var(--accent2);
+  color: var(--accent2);
+  animation: export-gpx-pulse 1.3s ease-out 1s 5;
+}
+@keyframes export-gpx-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent2) 45%, transparent); }
+  70%  { box-shadow: 0 0 0 9px color-mix(in srgb, var(--accent2) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent2) 0%, transparent); }
 }
 
 .btn-primary {
@@ -185,29 +300,6 @@ input[type=range]::-webkit-slider-thumb {
   line-height: 1.4;
 }
 
-/* Floating zoom controls — top-right of the map */
-.map-zoom-controls {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.map-zoom-btn {
-  width: 36px; height: 36px;
-  font-family: 'DM Mono', monospace;
-  font-size: 1.15rem; font-weight: 500;
-  background: rgba(var(--panel-rgb), 0.92);
-  backdrop-filter: blur(16px);
-  color: var(--text);
-  border: 1px solid var(--border); border-radius: 14px;
-  box-shadow: 0 4px 16px rgba(80, 60, 30, 0.12);
-  cursor: pointer; transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.map-zoom-btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
-
 /* Coordinates Box */
 .coord-display {
   position: fixed;
@@ -235,6 +327,35 @@ input[type=range]::-webkit-slider-thumb {
   font-size: 0.6rem; color: var(--muted);
 }
 .map-attr a { color: var(--muted); }
+
+.maplibregl-ctrl-bottom-right {
+  bottom: 40px;
+}
+
+/* Numbered badge on via-point markers */
+.rw-marker-badge {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  width: 19px;
+  height: 19px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Syne', sans-serif;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 1;
+  color: #fff;
+  text-shadow:
+    -1px -1px 0 #33302a,
+     1px -1px 0 #33302a,
+    -1px  1px 0 #33302a,
+     1px  1px 0 #33302a,
+     0    0   1px #33302a;
+  pointer-events: none;
+  user-select: none;
+}
 
 /* Route popup (MapLibre) */
 .maplibregl-popup {
@@ -418,6 +539,9 @@ label:focus-visible,
 
   .route-hint { font-size: 0.74rem; }
 
+  .mode-option svg { width: 52px; height: 28px; }
+  .mode-option .mode-label { font-size: 0.6rem; }
+
   /* Keep coordinates above the panel */
   .coord-display {
     left: 50%;
@@ -482,21 +606,6 @@ label:focus-visible,
     transform: none;
     max-width: none;
     text-align: center;
-  }
-}
-
-/* Remove hover-only behaviour on touch devices */
-@media (hover: none) {
-  .map-zoom-btn:hover {
-    background: rgba(var(--panel-rgb), 0.92);
-    border-color: var(--border);
-    color: var(--text);
-  }
-
-  .map-zoom-btn:active {
-    background: var(--border);
-    border-color: var(--accent);
-    color: var(--accent);
   }
 }
 
