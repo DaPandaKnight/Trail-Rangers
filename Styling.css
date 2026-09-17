@@ -23,26 +23,50 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 /* ── Side Panel ── */
 #panel {
   position: fixed; top: 50%; left: 48px; transform: translateY(-50%); z-index: 10;
-  width: 300px;
+  width: 340px;
   background: rgba(var(--panel-rgb), 0.92);
   box-shadow: 0 8px 28px rgba(80, 60, 30, 0.1);
   backdrop-filter: blur(16px);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 18px;
   padding: 26px;
   display: flex;
   flex-direction: column;
   gap: 18px;
 }
 
+.panel-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.panel-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.panel-brand-title {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: 0.01em;
+  color: var(--text);
+}
+
 .panel-section-label {
-  font-size: 0.8rem; letter-spacing: 0.12em; text-transform: uppercase;
-  color: var(--muted); margin-bottom: 12px;
+  font-size: 0.8rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+   margin-bottom: 12px;
 }
 
 /* Layer toggles */
 .layer-row {
-  display: flex; align-items: center;
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 .layer-name { font-size: 1rem; color: var(--text); min-width: 150px; }

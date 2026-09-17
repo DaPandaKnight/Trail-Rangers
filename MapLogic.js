@@ -331,7 +331,7 @@ document
     const role = roleForIndex(i, total);
     if (role === 'start') return 'Start';
     if (role === 'end') return 'End';
-    return `Waypoint ${i}`;
+    return `Via ${i}`;
   }
 
   function colorForRole(role) {
@@ -383,10 +383,10 @@ function updateRouteHint() {
   } else if (waypoints.length === 2) {
     routeHintEl.textContent = 'Add a waypoint to your route';
   } else if (waypoints.length === 3) {
-    routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint, or add waypoints as needed';
+    routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint, or add more as needed';
   } else {
     routeHintEl.textContent =
-      `Ready — hit Generate Route to pass through ${waypoints.length} waypoints.`;
+      `Ready — hit Generate Route to pass through ${waypoints.length - 2} via points.`;
   }
 }
 
@@ -400,7 +400,7 @@ function updateGenerateButton() {
 function updateAddButton() {
   const atMax = waypoints.length >= MAX_WAYPOINTS;
   addWaypointBtn.disabled = atMax || routeLoading;
-  addWaypointBtn.textContent = atMax ? 'Max Waypoints Placed' : '+ Add Waypoint';
+  addWaypointBtn.textContent = atMax ? 'Max  Waypoints Placed' : '+ Add Waypoint';
 }
 
 
@@ -433,12 +433,8 @@ function clearRouteLine() {
 
 
 // ========================================================================
-// STRAIGHT-LINE PREVIEW (client-side only, no backend call)
+// STRAIGHT-LINE PREVIEW 
 // ========================================================================
-// Rebuilding this line on every single 'drag' event (which can fire dozens
-// of times a second on a fast drag) is what caused it to flicker/disappear.
-// Instead we just record that a redraw is needed and do at most one per
-// animation frame, so it always draws smoothly no matter how fast you drag.
 
 let previewFrameId = null;
 
