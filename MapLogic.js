@@ -93,9 +93,34 @@ const map = new maplibregl.Map({
   minZoom: 4,
   maxZoom: 19,
 
+  // Disabled here and added manually below, so it can be explicitly
+  // anchored to bottom-left instead of MapLibre's default bottom-right —
+  // that corner was colliding with the coordinate display bubble once
+  // the attribution text grew to include OSM's credit alongside LINZ's.
+  attributionControl: false,
+
   transformRequest:
     transformRequest
 });
+
+function resizeMap() {
+  map.resize();
+}
+
+map.on("load", () => {
+  requestAnimationFrame(resizeMap);
+  setTimeout(resizeMap, 250);
+});
+
+window.addEventListener("resize", resizeMap);
+window.addEventListener("orientationchange", () => {
+  setTimeout(resizeMap, 250);
+});
+
+map.addControl(new maplibregl.AttributionControl({
+  compact: true,
+  customAttribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
+}), 'bottom-left');
 
 
 // ========================================================================
@@ -237,10 +262,6 @@ document
   });
 
 
-  // ── Zoom buttons ─────────────────────────────────────────────────────────
-  document.getElementById('zoom-in').addEventListener('click',  () => map.zoomIn());
-  document.getElementById('zoom-out').addEventListener('click', () => map.zoomOut());
-
   // ── Route planner ────────────────────────────────────────────────────────
   // Add the ability to have multiple waypoints, waypoints will now be stored in an array
   // Each point will have a role assigned to it (start, end, via) and the role will be assigned based
@@ -255,7 +276,7 @@ document
   const VIA_COLOR   = '#2f6fed'; // matches --via
   const PREVIEW_LINE_COLOR = '#7a7266'; // matches --muted — marks it as a straight preview, not a real route
 
-  const MAX_WAYPOINTS = 5;
+  const MAX_WAYPOINTS = 7; // start + up to 5 via points + end
 
   const routeHintEl      = document.getElementById('route-hint');
   const routePointsEl    = document.getElementById('route-points');
@@ -269,6 +290,13 @@ document
   const routeErrorEl     = document.getElementById('route-error');
   const exportGPXBtn     = document.getElementById('export-gpx');
 
+  function resetRouteStats() {
+    statDistanceEl.textContent = '—';
+    statTimeEl.textContent = '—';
+    statClimbEl.textContent = '—';
+    routeStatsEl.hidden = true;
+  }
+
   // main array to store all waypoints 
   // instead of having a fixed start and end point, the waypoints will be assigned a role (start, end, via)
   // the roles will be assigned based on the point's position in the array 
@@ -276,6 +304,26 @@ document
   let routeLoading = false;
   let currentRouteFeature = null;
   let currentRouteGPX = null;
+
+  // ── Route mode ────────────────────────────────────────────────────────
+  // 'fixed' = classic start/end pin placement (click-to-place, max 2 points)
+  // 'multi' = existing waypoint-list flow (add-at-center, up to MAX_WAYPOINTS)
+  let routeMode = 'fixed';
+  let fixedStart = null; // { lngLat, marker }
+  let fixedEnd = null;
+
+  const modeSwitchEl   = document.getElementById('mode-switch');
+  const modeFixedEl    = document.getElementById('mode-fixed');
+  const modeMultiEl    = document.getElementById('mode-multi');
+  const placeStartBtn  = document.getElementById('place-start');
+  const placeEndBtn    = document.getElementById('place-end');
+  const pointADotEl    = document.getElementById('point-a-dot');
+  const pointBDotEl    = document.getElementById('point-b-dot');
+  const pointACoordsEl = document.getElementById('point-a-coords');
+  const pointBCoordsEl = document.getElementById('point-b-coords');
+  const pointARowEl    = document.getElementById('point-a-row');
+  const pointBRowEl    = document.getElementById('point-b-row');
+  const fixedPointsListEl = document.getElementById('fixed-points-list');
 
   function formatCoords(lon, lat) {
     return `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
@@ -297,7 +345,7 @@ document
     const role = roleForIndex(i, total);
     if (role === 'start') return 'Start';
     if (role === 'end') return 'End';
-    return `Via ${i}`;
+    return `Waypoint ${i}`;
   }
 
   function colorForRole(role) {
@@ -331,26 +379,42 @@ function updateRouteHint() {
 
   if (routeLoading) {return;}
 
+  if (routeMode === 'fixed') {
+    if (fixedStart && fixedEnd) {
+      routeHintEl.textContent = 'Ready — hit Generate Route';
+    } else if (!fixedStart) {
+      routeHintEl.textContent = "Press 'Start Pin' to place your starting point";
+    } else {
+      routeHintEl.textContent = "Press 'End Pin' to place your end point, then drag pins to fine-tune";
+    }
+    return;
+  }
+
   if (waypoints.length === 0) {
     routeHintEl.textContent = 'Add at least two waypoints to plan a route';
   } else if (waypoints.length === 1) {
-    routeHintEl.textContent = 'Add an end waypoint, then drag pins to fine-tune';
+    routeHintEl.textContent = 'Add an end point, then drag pins to fine-tune';
   } else if (waypoints.length === 2) {
-    routeHintEl.textContent = 'Ready — hit Generate Route (drag pins anytime to adjust)';
+    routeHintEl.textContent = 'Add a waypoint to your route';
+  } else if (waypoints.length === 3) {
+    routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint, or add waypoints as needed';
   } else {
     routeHintEl.textContent =
-      `Ready — hit Generate Route to path through all ${waypoints.length} waypoints.`;
+      `Ready — hit Generate Route to pass through ${waypoints.length} waypoints.`;
   }
 }
 
 function updateGenerateButton() {
-  generateRouteBtn.disabled = waypoints.length < 2 || routeLoading;
+  const ready = routeMode === 'fixed'
+    ? !!(fixedStart && fixedEnd)
+    : waypoints.length >= 3;
+  generateRouteBtn.disabled = !ready || routeLoading;
 }
 
 function updateAddButton() {
   const atMax = waypoints.length >= MAX_WAYPOINTS;
   addWaypointBtn.disabled = atMax || routeLoading;
-  addWaypointBtn.textContent = atMax ? `Max ${MAX_WAYPOINTS} Waypoints` : '+ Add Waypoint';
+  addWaypointBtn.textContent = atMax ? 'Max Waypoints Placed' : '+ Add Waypoint';
 }
 
 
@@ -359,6 +423,10 @@ function updateAddButton() {
 // ========================================================================
 
 function clearRouteLine() {
+  if (routeDrawAnimationId !== null) {
+    cancelAnimationFrame(routeDrawAnimationId);
+    routeDrawAnimationId = null;
+  }
   if (map.getLayer('route-line')) {
     map.removeLayer('route-line');
     }
@@ -373,23 +441,42 @@ function clearRouteLine() {
 
   if (exportGPXBtn) {
   exportGPXBtn.disabled = true;
+  exportGPXBtn.classList.remove('is-ready');
 }
 }
 
 
 // ========================================================================
-// STRAIGHT-LINE WAYPOINT PREVIEW (client-side only, no backend call)
+// STRAIGHT-LINE PREVIEW (client-side only, no backend call)
 // ========================================================================
+// Rebuilding this line on every single 'drag' event (which can fire dozens
+// of times a second on a fast drag) is what caused it to flicker/disappear.
+// Instead we just record that a redraw is needed and do at most one per
+// animation frame, so it always draws smoothly no matter how fast you drag.
 
-function drawWaypointPreview() {
-  if (waypoints.length < 2) {
+let previewFrameId = null;
+
+function getPreviewCoordinates() {
+  if (routeMode === 'fixed') {
+    if (!fixedStart || !fixedEnd) return null;
+    return [fixedStart.lngLat, fixedEnd.lngLat];
+  }
+  if (waypoints.length < 2) return null;
+  return waypoints.map(wp => wp.lngLat);
+}
+
+function renderPreviewLineNow() {
+  previewFrameId = null;
+
+  const coordinates = getPreviewCoordinates();
+  if (!coordinates) {
     removeWaypointPreview();
     return;
   }
 
   const geojson = {
     type: 'Feature',
-    geometry: { type: 'LineString', coordinates: waypoints.map(wp => wp.lngLat) },
+    geometry: { type: 'LineString', coordinates },
   };
 
   if (map.getSource('waypoint-preview')) {
@@ -411,7 +498,16 @@ function drawWaypointPreview() {
   }
 }
 
+function scheduleWaypointPreview() {
+  if (previewFrameId !== null) return;
+  previewFrameId = requestAnimationFrame(renderPreviewLineNow);
+}
+
 function removeWaypointPreview() {
+  if (previewFrameId !== null) {
+    cancelAnimationFrame(previewFrameId);
+    previewFrameId = null;
+  }
   if (map.getLayer('waypoint-preview-line')) map.removeLayer('waypoint-preview-line');
   if (map.getSource('waypoint-preview')) map.removeSource('waypoint-preview');
 }
@@ -423,10 +519,115 @@ function removeWaypointPreview() {
 
 function invalidateRoute() {
   clearRouteLine();
-  drawWaypointPreview();
-  routeStatsEl.hidden = true;
+  scheduleWaypointPreview();
+  resetRouteStats();
   routeErrorEl.hidden = true;
 }
+
+
+// ========================================================================
+// FIXED (2-POINT) MODE — PIN PLACEMENT
+// ========================================================================
+
+function renderFixedPoints() {
+  pointARowEl.hidden = !fixedStart;
+  pointACoordsEl.textContent = fixedStart ? formatCoords(fixedStart.lngLat[0], fixedStart.lngLat[1]) : 'Not set';
+  pointACoordsEl.classList.toggle('is-set', !!fixedStart);
+  pointADotEl.classList.toggle('is-set', !!fixedStart);
+
+  pointBRowEl.hidden = !fixedEnd;
+  pointBCoordsEl.textContent = fixedEnd ? formatCoords(fixedEnd.lngLat[0], fixedEnd.lngLat[1]) : 'Not set';
+  pointBCoordsEl.classList.toggle('is-set', !!fixedEnd);
+  pointBDotEl.classList.toggle('is-set', !!fixedEnd);
+
+  fixedPointsListEl.hidden = !fixedStart && !fixedEnd;
+}
+
+
+function setFixedPoint(role, lngLat) {
+  const point = { lngLat, marker: null };
+  const marker = new maplibregl.Marker({
+    color: role === 'start' ? START_COLOR : END_COLOR,
+    draggable: true,
+  }).setLngLat(lngLat).addTo(map);
+
+  marker.on('drag', () => {
+    const ll = marker.getLngLat();
+    point.lngLat = [ll.lng, ll.lat];
+    renderFixedPoints();
+    invalidateRoute();
+    updateGenerateButton();
+    updateRouteHint();
+  });
+
+  point.marker = marker;
+
+  if (role === 'start') {
+    if (fixedStart?.marker) fixedStart.marker.remove();
+    fixedStart = point;
+  } else {
+    if (fixedEnd?.marker) fixedEnd.marker.remove();
+    fixedEnd = point;
+  }
+}
+
+function dropFixedPointAtCenter(role) {
+  if (routeLoading) return;
+
+  const center = map.getCenter();
+  setFixedPoint(role, [center.lng, center.lat]);
+
+  renderFixedPoints();
+  invalidateRoute();
+  updateGenerateButton();
+  updateRouteHint();
+}
+
+placeStartBtn.addEventListener('click', () => dropFixedPointAtCenter('start'));
+placeEndBtn.addEventListener('click', () => dropFixedPointAtCenter('end'));
+
+function clearFixedPoints() {
+  if (fixedStart?.marker) fixedStart.marker.remove();
+  if (fixedEnd?.marker) fixedEnd.marker.remove();
+  fixedStart = null;
+  fixedEnd = null;
+  renderFixedPoints();
+}
+
+// ── Mode switch ──────────────────────────────────────────────────────────
+function setRouteMode(mode) {
+  if (mode === routeMode || routeLoading) return;
+
+  // Reset whichever mode's state we're leaving so the two flows never mix
+  clearFixedPoints();
+  waypoints.forEach(wp => { if (wp.marker) wp.marker.remove(); });
+  waypoints = [];
+  renderWaypointRows();
+  clearRouteLine();
+  removeWaypointPreview();
+  resetRouteStats();
+  routeErrorEl.hidden = true;
+
+  routeMode = mode;
+
+  modeSwitchEl.querySelectorAll('.mode-option').forEach(btn => {
+    const active = btn.dataset.mode === mode;
+    btn.classList.toggle('is-active', active);
+    btn.setAttribute('aria-selected', active ? 'true' : 'false');
+  });
+
+  modeFixedEl.hidden = mode !== 'fixed';
+  modeMultiEl.hidden = mode !== 'multi';
+
+  updateGenerateButton();
+  updateAddButton();
+  updateRouteHint();
+}
+
+modeSwitchEl.addEventListener('click', (event) => {
+  const btn = event.target.closest('.mode-option');
+  if (btn) setRouteMode(btn.dataset.mode);
+});
 
 
 // ========================================================================
@@ -438,9 +639,18 @@ function renderWaypointRows() {
 
   waypoints.forEach((wp, i) => {
     const role = roleForIndex(i, waypoints.length);
+    const isVia = role === 'via';
 
     const row = document.createElement('div');
-    row.className = 'route-point-row';
+    row.className = `route-point-row${isVia ? ' is-via' : ''}`;
+    row.dataset.index = String(i);
+
+    if (isVia) {
+      row.addEventListener('pointerdown', (event) => {
+        if (event.target.closest('.point-remove')) return; // let the remove button work normally
+        beginWaypointDrag(event, i, row);
+      });
+    }
 
     const dot = document.createElement('span');
     dot.className = `point-dot point-dot-${role} is-set`;
@@ -465,17 +675,143 @@ function renderWaypointRows() {
   });
 }
 
+
+// ========================================================================
+// WAYPOINT LIST — DRAG TO REORDER (via points only)
+// ========================================================================
+// Start and end never move here — only the via rows in between can be
+// dragged past each other. Dropping a via just changes which array slot it
+// occupies (and therefore its number and where the route visits it); its
+// actual pinned location on the map never changes.
+
+let waypointDrag = null;
+let dropIndicatorEl = null;
+
+function getDropIndicatorEl() {
+  if (!dropIndicatorEl) {
+    dropIndicatorEl = document.createElement('div');
+    dropIndicatorEl.className = 'waypoint-drop-indicator';
+    document.body.appendChild(dropIndicatorEl);
+  }
+  return dropIndicatorEl;
+}
+
+function beginWaypointDrag(event, index, rowEl) {
+  if (routeLoading) return;
+  event.preventDefault();
+
+  const viaRows = [];
+  routePointsEl.querySelectorAll('.route-point-row.is-via').forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    viaRows.push({ index: Number(el.dataset.index), el, rect });
+  });
+
+  waypointDrag = {
+    fromIndex: index,
+    dropIndex: index,
+    rowEl,
+    pointerId: event.pointerId,
+    otherRows: viaRows.filter(r => r.index !== index), // sorted top-to-bottom, dragged one excluded
+  };
+
+  rowEl.classList.add('is-dragging');
+  rowEl.setPointerCapture(event.pointerId);
+  document.body.style.cursor = 'grabbing';
+
+  rowEl.addEventListener('pointermove', onWaypointDragMove);
+  rowEl.addEventListener('pointerup', onWaypointDragEnd);
+  rowEl.addEventListener('pointercancel', onWaypointDragEnd);
+}
+
+function onWaypointDragMove(event) {
+  if (!waypointDrag) return;
+
+  const { otherRows } = waypointDrag;
+
+  // Rank (1-based) among the OTHER via rows whose midpoint the pointer has
+  // passed — this maps directly onto the array index the dragged item
+  // should land on once it's spliced out and back in.
+  let dropRank = 1;
+  otherRows.forEach(({ rect }) => {
+    if (event.clientY > rect.top + rect.height / 2) dropRank++;
+  });
+
+  waypointDrag.dropIndex = Math.max(1, Math.min(waypoints.length - 2, dropRank));
+
+  const indicator = getDropIndicatorEl();
+
+  if (!otherRows.length) {
+    indicator.style.display = 'none';
+    return;
+  }
+
+  // dropRank is 1-based against otherRows — dropRank-1 is the row we land
+  // just above; past the last one, the line sits below it instead.
+  const targetRow = otherRows[Math.min(dropRank - 1, otherRows.length - 1)];
+  const showAfter = dropRank - 1 >= otherRows.length;
+  const lineY = showAfter ? targetRow.rect.bottom + 4 : targetRow.rect.top - 4;
+
+  indicator.style.display = 'block';
+  indicator.style.top = `${lineY}px`;
+  indicator.style.left = `${targetRow.rect.left}px`;
+  indicator.style.width = `${targetRow.rect.width}px`;
+}
+
+function onWaypointDragEnd() {
+  if (!waypointDrag) return;
+
+  const { fromIndex, dropIndex, rowEl, pointerId } = waypointDrag;
+
+  rowEl.releasePointerCapture(pointerId);
+  rowEl.removeEventListener('pointermove', onWaypointDragMove);
+  rowEl.removeEventListener('pointerup', onWaypointDragEnd);
+  rowEl.removeEventListener('pointercancel', onWaypointDragEnd);
+  if (dropIndicatorEl) dropIndicatorEl.style.display = 'none';
+  document.body.style.cursor = '';
+
+  waypointDrag = null;
+
+  if (dropIndex !== fromIndex) {
+    const [item] = waypoints.splice(fromIndex, 1);
+    waypoints.splice(dropIndex, 0, item);
+
+    rebuildMarkers();
+    invalidateRoute();
+    updateRouteHint();
+  }
+
+  renderWaypointRows();
+}
+
 // this function is to change the color of pin when its role is changed
 // might need to rethink how to do this if where to scale into more waypoints as this is not very efficient
 // but works for right now so I will keep it this way
 function rebuildMarkers() {
   waypoints.forEach((wp, i) => {
+    const role = roleForIndex(i, waypoints.length);
+    // Via points also carry a sequence number (1-based, matches the panel's
+    // "Waypoint N" label). The signature includes it so that renumbering a
+    // via point after a delete still triggers a badge refresh, even though
+    // its role ('via') hasn't changed.
+    const signature = role === 'via' ? `via-${i}` : role;
+
+    // Signature unchanged — leave this marker exactly where it is. This is
+    // what stops an existing pin from ever appearing to "jump" or swap
+    // places when a new waypoint is added or removed elsewhere.
+    if (wp.marker && wp.signature === signature) return;
+
     if (wp.marker) wp.marker.remove();
 
-    const role = roleForIndex(i, waypoints.length);
     const marker = new maplibregl.Marker({ color: colorForRole(role), draggable: true })
       .setLngLat(wp.lngLat)
       .addTo(map);
+
+    if (role === 'via') {
+      const badge = document.createElement('div');
+      badge.className = 'rw-marker-badge';
+      badge.textContent = String(i);
+      marker.getElement().appendChild(badge);
+    }
 
     marker.on('drag', () => {
       const ll = marker.getLngLat();
@@ -485,6 +821,7 @@ function rebuildMarkers() {
     });
 
     wp.marker = marker;
+    wp.signature = signature;
   });
 }
 
@@ -492,7 +829,16 @@ function rebuildMarkers() {
 function addWaypointAtCenter() {
   if (waypoints.length >= MAX_WAYPOINTS) return;
   const center = map.getCenter();
-  waypoints.push({ lngLat: [center.lng, center.lat], marker: null });
+  const newPoint = { lngLat: [center.lng, center.lat], marker: null };
+
+  if (waypoints.length < 2) {
+    // No end pin yet — the first point becomes start, the second becomes end.
+    waypoints.push(newPoint);
+  } else {
+    // An end pin already exists: insert the new point as a via stop just
+    // before it, so the existing end never moves or changes role.
+    waypoints.splice(waypoints.length - 1, 0, newPoint);
+  }
 
   rebuildMarkers();
   renderWaypointRows();
@@ -521,13 +867,17 @@ function removeWaypoint(index) {
 // ========================================================================
 
 function resetRoute() {
-  waypoints.forEach(wp => { if (wp.marker) wp.marker.remove(); });
-  waypoints = [];
+  if (routeMode === 'fixed') {
+    clearFixedPoints();
+  } else {
+    waypoints.forEach(wp => { if (wp.marker) wp.marker.remove(); });
+    waypoints = [];
+    renderWaypointRows();
+  }
 
   clearRouteLine();
   removeWaypointPreview();
-  renderWaypointRows();
-  routeStatsEl.hidden = true;
+  resetRouteStats();
   routeErrorEl.hidden = true;
   updateGenerateButton();
   updateAddButton();
@@ -539,12 +889,134 @@ function resetRoute() {
 // DRAW ROUTE
 // ========================================================================
 
-function drawRoute(routeFeature) {
-  const geojson = {
-    type:'FeatureCollection',
-    features: [routeFeature]
-  };
+// ========================================================================
+// ROUTE LINE — DRAWN PROGRESSIVELY, START TO END
+// ========================================================================
+// Rather than handing MapLibre the whole geometry in one setData() call, we
+// walk along the actual route coordinates over ~2 seconds so the line looks
+// like it's being traced out live, the same way the backend traced it.
 
+let routeDrawAnimationId = null;
+
+function ensureRouteLayers(initialGeojson) {
+  if (map.getSource('route')) {
+    map.getSource('route').setData(initialGeojson);
+    return;
+  }
+
+  map.addSource('route', { type: 'geojson', data: initialGeojson });
+
+  // Route glow
+  map.addLayer({
+    id: 'route-glow',
+    type: 'line',
+    source: 'route',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': END_COLOR,
+      'line-width': 9,
+      'line-blur': 6,
+      'line-opacity': 0.35,
+    },
+  });
+
+  // Main route line
+  map.addLayer({
+    id: 'route-line',
+    type: 'line',
+    source: 'route',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': END_COLOR,
+      'line-width': 3.5,
+      'line-opacity': 0.95,
+    },
+  });
+}
+
+function setRouteLineCoordinates(coordinates) {
+  ensureRouteLayers({
+    type: 'Feature',
+    geometry: { type: 'LineString', coordinates },
+  });
+}
+
+// Good enough for pacing an animation — not trying to be survey-accurate.
+function haversineMeters([lng1, lat1], [lng2, lat2]) {
+  const R = 6371000;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+function animateRouteLine(coordinates, durationMs) {
+  if (routeDrawAnimationId !== null) {
+    cancelAnimationFrame(routeDrawAnimationId);
+    routeDrawAnimationId = null;
+  }
+
+  if (coordinates.length < 2) {
+    setRouteLineCoordinates(coordinates);
+    return;
+  }
+
+  // Cumulative distance along the route so the line advances at a constant
+  // speed regardless of how far apart the backend's points happen to be.
+  const cumulative = [0];
+  for (let i = 1; i < coordinates.length; i++) {
+    cumulative.push(cumulative[i - 1] + haversineMeters(coordinates[i - 1], coordinates[i]));
+  }
+  const totalDistance = cumulative[cumulative.length - 1];
+
+  if (!totalDistance) {
+    setRouteLineCoordinates(coordinates);
+    return;
+  }
+
+  setRouteLineCoordinates([coordinates[0]]);
+  const startTime = performance.now();
+
+  function step(now) {
+    const t = Math.min(1, (now - startTime) / durationMs);
+    const targetDistance = t * totalDistance;
+
+    let segIndex = 1;
+    while (segIndex < cumulative.length - 1 && cumulative[segIndex] < targetDistance) {
+      segIndex++;
+    }
+
+    const segStartDist = cumulative[segIndex - 1];
+    const segEndDist = cumulative[segIndex];
+    const segFraction = segEndDist > segStartDist
+      ? (targetDistance - segStartDist) / (segEndDist - segStartDist)
+      : 1;
+
+    const [lngA, latA] = coordinates[segIndex - 1];
+    const [lngB, latB] = coordinates[segIndex];
+    const currentPoint = [
+      lngA + (lngB - lngA) * segFraction,
+      latA + (latB - latA) * segFraction,
+    ];
+
+    setRouteLineCoordinates([...coordinates.slice(0, segIndex), currentPoint]);
+
+    if (t < 1) {
+      routeDrawAnimationId = requestAnimationFrame(step);
+    } else {
+      routeDrawAnimationId = null;
+      setRouteLineCoordinates(coordinates); // exact final geometry, no rounding drift
+    }
+  }
+
+  routeDrawAnimationId = requestAnimationFrame(step);
+}
+
+
+function drawRoute(routeFeature) {
   currentRouteFeature = routeFeature;
 
   // The real backend route replaces the straight-line preview.
@@ -552,61 +1024,16 @@ function drawRoute(routeFeature) {
 
 if (exportGPXBtn) {
   exportGPXBtn.disabled = false;
+  exportGPXBtn.classList.add('is-ready');
+  exportGPXBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-  if (map.getSource('route')) {
-    map.getSource('route')
-       .setData(geojson);
-  } else {
-    map.addSource('route',{
-        type:'geojson',
-        data:geojson
-      }
-    );
-
-    // Route glow
-    map.addLayer({
-      id:'route-glow',
-      type:'line',
-
-      source:'route',
-
-      layout: {
-        'line-join': 'round',
-        'line-cap':'round'
-      },
-
-      paint: {
-        'line-color': END_COLOR,
-        'line-width': 9,
-        'line-blur': 6,
-        'line-opacity': 0.35}
-    });
-
-    // Main route line
-    map.addLayer({
-      id:'route-line',
-      type:'line',
-      source:'route',
-
-      layout: {
-        'line-join':'round',
-        'line-cap':'round'
-      },
-
-      paint: {
-        'line-color': END_COLOR,
-        'line-width': 3.5,
-        'line-opacity': 0.95
-      }
-    });
-  }
-
-
-  // Zoom map to generated route
   const routeCoordinates = routeFeature.geometry.coordinates;
 
+  // Trace the line in from start to end over ~2s instead of snapping it in.
+  animateRouteLine(routeCoordinates, 2000);
 
+  // Zoom map to generated route
   const bounds = routeCoordinates.reduce(
       (existingBounds, coordinate) =>
         existingBounds.extend(coordinate),
@@ -641,14 +1068,28 @@ addWaypointBtn.addEventListener('click',
 // GENERATE ROUTE
 // ========================================================================
 
+function getRoutePoints() {
+  if (routeMode === 'fixed') {
+    if (!fixedStart || !fixedEnd) return null;
+    return { a: fixedStart.lngLat, b: fixedEnd.lngLat, via: [] };
+  }
+  if (waypoints.length < 2) return null;
+  return {
+    a: waypoints[0].lngLat,
+    b: waypoints[waypoints.length - 1].lngLat,
+    via: waypoints.slice(1, -1).map(wp => wp.lngLat),
+  };
+}
+
 generateRouteBtn.addEventListener('click', async () => {
-    if (waypoints.length < 2 || routeLoading) {
+    const points = getRoutePoints();
+    if (!points || routeLoading) {
       return;
     }
 
-    const pointA = waypoints[0].lngLat;
-    const pointB = waypoints[waypoints.length - 1].lngLat;
-    const viaPoints = waypoints.slice(1, -1).map(wp => wp.lngLat);
+    const pointA = points.a;
+    const pointB = points.b;
+    const viaPoints = points.via;
 
     // --------------------------------------------------
     // SHOW LOADING SCREEN
@@ -662,12 +1103,17 @@ generateRouteBtn.addEventListener('click', async () => {
     clearRouteBtn.disabled = true;
     if (exportGPXBtn) {
       exportGPXBtn.disabled =true;
+      exportGPXBtn.classList.remove('is-ready');
     }
 
     waypoints.forEach(wp => { if (wp.marker) wp.marker.setDraggable(false); });
+    if (fixedStart?.marker) fixedStart.marker.setDraggable(false);
+    if (fixedEnd?.marker) fixedEnd.marker.setDraggable(false);
+    placeStartBtn.disabled = true;
+    placeEndBtn.disabled = true;
 
     routeErrorEl.hidden = true;
-    routeStatsEl.hidden =true;
+    resetRouteStats();
     routeHintEl.textContent ='Crunching terrain data — this can take a little while for longer routes.';
 
 
@@ -771,6 +1217,10 @@ generateRouteBtn.addEventListener('click', async () => {
       clearRouteBtn.disabled = false;
 
       waypoints.forEach(wp => { if (wp.marker) wp.marker.setDraggable(true); });
+      if (fixedStart?.marker) fixedStart.marker.setDraggable(true);
+      if (fixedEnd?.marker) fixedEnd.marker.setDraggable(true);
+      placeStartBtn.disabled = false;
+      placeEndBtn.disabled = false;
     }
   }
 );
@@ -797,6 +1247,7 @@ function downloadGPX() {
   link.click();
 
   URL.revokeObjectURL(url);
+  exportGPXBtn.classList.remove('is-ready');
 }
 if (exportGPXBtn) {
   exportGPXBtn.addEventListener('click', downloadGPX);
@@ -832,3 +1283,12 @@ function hideLoadingScreen() {
     loadingScreen.style.display ='none';
   }
 }
+
+// ========================================================================
+// INITIAL UI STATE
+// ========================================================================
+
+renderFixedPoints();
+updateGenerateButton();
+updateAddButton();
+updateRouteHint();
