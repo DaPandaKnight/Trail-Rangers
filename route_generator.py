@@ -39,6 +39,7 @@ import json
 import math
 import os
 import pickle
+import re
 import time
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
@@ -223,8 +224,22 @@ def fetch_dem_mosaic(bbox: tuple[float, float, float, float], zoom: int,
     def fetch_one(task):
         ti, ty, tj, tx = task
         url = ELEVATION_TILE_URL.format(z=zoom, x=tx, y=ty, key=api_key)
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+        except requests.exceptions.RequestException as e:
+            # NEVER let the raw exception propagate — requests' default
+            # HTTPError message includes the full request URL, which
+            # embeds the LINZ API key as a plain query parameter. That
+            # message was reaching end users verbatim through the API's
+            # error response. `from None` deliberately severs the
+            # exception chain so even a traceback of THIS exception can't
+            # show the original (key-containing) one via Python's
+            # "during handling of the above exception" chaining.
+            safe_url = url.replace(api_key, "***REDACTED***")
+            raise RuntimeError(
+                f"DEM tile fetch failed ({type(e).__name__}) for {safe_url}"
+            ) from None
         elev = decode_terrain_rgb(Image.open(BytesIO(resp.content)))
         return ti, tj, elev
 
@@ -1243,7 +1258,7 @@ def route_any_two_points(waypoint_a: tuple[float, float],
                            padding_frac: float = 0.3,
                            max_padding_attempts: int = 3,
                            padding_growth: float = 2.0,
-                           max_attempt_seconds: float = 39.0) -> dict:
+                           max_attempt_seconds: float = 45.0) -> dict:
     """
     Performs a free search between two waypoints anywhere in New Zealand,
     building a bounding box and grid sized to the query.
@@ -1336,11 +1351,18 @@ def route_any_two_points(waypoint_a: tuple[float, float],
 
     if connected:
         error_msg = (
-            f"No path found."
+            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
+            f"before stopping), but a connectivity check confirms land "
+            f"DOES connect these two points within the final search area — this points to a "
+            f"real bug in the search or cost arrays, not a genuine geography limit."
         )
     else:
         error_msg = (
-            f"No path found. This path may be disconnected by water."
+            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
+            f"before stopping). A connectivity check confirms these two "
+            f"points are genuinely separated by water within the final search area — most "
+            f"likely open ocean, or a detour larger than this many rounds of padding "
+            f"expansion can reach."
         )
 
     print(error_msg)
@@ -1473,6 +1495,26 @@ def write_gpx_file(result: dict, path: str, track_name: str = "Ridge Walker Rout
         f.write(gpx_str)
 
 
+# ── Security: never let an API key reach a user-facing error message ────
+#
+# A real incident: a failed DEM tile request's HTTPError (whose default
+# string form includes the full request URL, LINZ API key included as a
+# plain query parameter) propagated unmodified through build_grid_state
+# and out through lambda_handler's `f"Routing failed: {e}"`, putting the
+# raw key in front of the end user. fetch_dem_mosaic's fetch_one() now
+# sanitizes this at its source (the actual fix), but this function is a
+# second, independent layer: it scans ANY error string for an api=...
+# query parameter — by pattern, not by comparing against today's known
+# key value — and redacts it, so a future exception path nobody thought
+# to sanitize at the source still can't leak a key through this same
+# route. Applied at both API response boundaries (Lambda and Flask)
+# below, right before an error ever leaves the process.
+
+def redact_api_keys(text: str) -> str:
+    """Redacts any 'api=<value>' query parameter found anywhere in text."""
+    return re.sub(r'([?&]api=)[^&\s"\']+', r'\1***REDACTED***', text)
+
+
 # ── Flask API ─────────────────────────────────────────────────────────
 #
 # Exposes POST /route, accepting {"a": [lon, lat], "b": [lon, lat],
@@ -1491,9 +1533,14 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
         a = tuple(body["a"])
         b = tuple(body["b"])
         via = [tuple(p) for p in body.get("via", [])] or None
-        result = route_with_waypoints(a, b, via=via, node_budget=node_budget)
-        if result.get("ok"):
-            result["gpx"] = route_to_gpx(result)
+        try:
+            result = route_with_waypoints(a, b, via=via, node_budget=node_budget)
+            if result.get("ok"):
+                result["gpx"] = route_to_gpx(result)
+            elif "error" in result:
+                result["error"] = redact_api_keys(result["error"])
+        except Exception as e:
+            result = {"ok": False, "error": redact_api_keys(f"Routing failed: {e}")}
         return jsonify(result)
 
     return app
@@ -1538,7 +1585,7 @@ def lambda_handler(event, context):
         return {
             "statusCode": 400,
             "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
-            "body": json.dumps({"ok": False, "error": f"Bad request: {e}"}),
+            "body": json.dumps({"ok": False, "error": redact_api_keys(f"Bad request: {e}")}),
         }
 
     try:
@@ -1549,11 +1596,16 @@ def lambda_handler(event, context):
             # route_to_gpx() the CLI's --out uses, just returned in the API
             # response instead of written to a local file.
             result["gpx"] = route_to_gpx(result)
+        elif "error" in result:
+            # Defense in depth: also redact any error message returned
+            # normally (not via an exception) — cheap insurance in case a
+            # future code path builds an error string containing a URL.
+            result["error"] = redact_api_keys(result["error"])
     except Exception as e:
         return {
             "statusCode": 500,
             "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
-            "body": json.dumps({"ok": False, "error": f"Routing failed: {e}"}),
+            "body": json.dumps({"ok": False, "error": redact_api_keys(f"Routing failed: {e}")}),
         }
 
     return {
