@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
   <title>NZ Terrain Explorer</title>
-  <link rel="icon" type="image/png" href="./RWIcon.png">
+  <link rel="icon" type="image/png" href="./images/RWIcon.png">
 
   <!-- MapLibre GL JS -->
   <link href="https://unpkg.com/maplibre-gl@4.1.2/dist/maplibre-gl.css" rel="stylesheet" />
@@ -22,10 +22,37 @@
 
   <div id="map"></div>
 
+  <!-- ── NZ place search (top-right, click to expand) ────────────────── -->
+  <div class="map-search" id="search" role="search">
+    <div class="search-shell">
+
+      <button type="button" class="search-toggle" id="search-toggle" aria-label="Search New Zealand"
+        aria-expanded="false" aria-controls="search-results">
+        <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="10.5" cy="10.5" r="6.75"></circle>
+          <line x1="15.6" y1="15.6" x2="20.5" y2="20.5"></line>
+        </svg>
+      </button>
+
+      <input type="text" class="search-input" id="search-input" placeholder="Search New Zealand" autocomplete="off"
+        autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search" role="combobox"
+        aria-autocomplete="list" aria-expanded="false" aria-controls="search-results" tabindex="-1" />
+
+      <div class="search-spinner" id="search-spinner" hidden aria-hidden="true"></div>
+
+      <button type="button" class="search-clear" id="search-clear" aria-label="Clear search" tabindex="-1" hidden>
+        &times;
+      </button>
+
+    </div>
+
+    <div class="search-results" id="search-results" role="listbox" aria-label="Search results" hidden></div>
+  </div>
+
   <div id="panel">
 
     <div class="panel-logo">
-      <img src="RWMainLogo.png" alt="RidgeWalker">
+      <img src="./images/RWMainLogo.png" alt="RidgeWalker">
     </div>
 
     <div>

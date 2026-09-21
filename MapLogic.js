@@ -271,9 +271,9 @@ document
   // (MapLibre disables map panning while a marker drag is in progress), so
   // this sidesteps any conflict with the map's own click-and-drag panning.
 
-  const START_COLOR = '#e2660a'; // matches --accent
-  const END_COLOR   = '#178f66'; // matches --accent2
-  const VIA_COLOR   = '#2f6fed'; // matches --via
+  const START_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--accent'); //'#e2660a'
+  const END_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--accent2'); //'#178f66'
+  const VIA_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--via'); //'#2f6fed'
   const PREVIEW_LINE_COLOR = '#7a7266'; // matches --muted — marks it as a straight preview, not a real route
 
   const MAX_WAYPOINTS = 7; // start + up to 5 via points + end
@@ -1292,3 +1292,582 @@ renderFixedPoints();
 updateGenerateButton();
 updateAddButton();
 updateRouteHint();
+
+
+// ========================================================================
+// NEW ZEALAND PLACE SEARCH
+// ========================================================================
+// Type-ahead search for NZ places, restricted to New Zealand only.
+//
+// Backend: Photon (photon.komoot.io) — an open-source OpenStreetMap
+// geocoder purpose-built for search-as-you-type. Nominatim is the more
+// obvious choice but its usage policy explicitly forbids client-side
+// autocomplete, so it is not usable here.
+//
+// "Only New Zealand" is enforced twice:
+//   1. countrycode=nz on the request (hard server-side filter).
+//   2. isInNewZealand() on every result that comes back, so nothing
+//      foreign can slip through if the public instance ever ignores (1).
+//
+// Everything lives inside an IIFE so none of these names can collide with
+// the route planner's globals above.
+
+(() => {
+
+  // ── Config ─────────────────────────────────────────────────────────────
+  const GEOCODER_URL       = 'https://photon.komoot.io/api';
+  const SEARCH_MIN_CHARS   = 2;
+  const SEARCH_DEBOUNCE_MS = 350;   // also keeps us well under 1 req/sec
+  const SEARCH_SHOW_LIMIT  = 7;     // results displayed
+  const SEARCH_FETCH_LIMIT = 12;    // results requested (spare covers filtering)
+  const SEARCH_CACHE_MAX   = 60;
+  const SEARCH_MARKER_MS   = 12000; // how long the "you are here" ring lingers
+  const MOBILE_BREAKPOINT  = 768;   // matches the CSS bottom-sheet breakpoint
+
+  // Rough zoom to settle on when a result has no extent of its own.
+  const SEARCH_ZOOM_BY_KIND = {
+    country: 5, state: 6, region: 6, county: 8, island: 9, archipelago: 8,
+    city: 11, borough: 12, town: 12, village: 13, hamlet: 14,
+    suburb: 13, neighbourhood: 14, quarter: 14, locality: 14,
+    farm: 14, isolated_dwelling: 15,
+    national_park: 9, protected_area: 10, nature_reserve: 11, forest: 10,
+    peak: 13, volcano: 13, ridge: 12, valley: 12, glacier: 12, saddle: 14,
+    lake: 11, bay: 11, river: 10, stream: 12, beach: 13, cape: 13,
+    hut: 15, alpine_hut: 15, wilderness_hut: 15, camp_site: 15,
+    trailhead: 15, viewpoint: 15, parking: 16, information: 15,
+  };
+
+  // ── Elements ───────────────────────────────────────────────────────────
+  const searchEl        = document.getElementById('search');
+  const searchShellEl   = searchEl && searchEl.querySelector('.search-shell');
+  const searchToggleEl  = document.getElementById('search-toggle');
+  const searchInputEl   = document.getElementById('search-input');
+  const searchClearEl   = document.getElementById('search-clear');
+  const searchSpinnerEl = document.getElementById('search-spinner');
+  const searchResultsEl = document.getElementById('search-results');
+
+  // If the markup isn't on the page, do nothing rather than throw — the
+  // route planner above must keep working regardless.
+  if (!searchEl || !searchShellEl || !searchToggleEl || !searchInputEl ||
+      !searchClearEl || !searchSpinnerEl || !searchResultsEl) {
+    return;
+  }
+
+  // ── State ──────────────────────────────────────────────────────────────
+  let searchOpen        = false;
+  let searchDebounceId  = null;
+  let searchController  = null;   // AbortController for the in-flight request
+  let searchRequestSeq  = 0;      // guards against out-of-order responses
+  let searchFeatures    = [];
+  let searchActiveIndex = -1;
+  let searchMarker      = null;
+  let searchMarkerTimer = null;
+  const searchCache     = new Map();
+
+
+  // ========================================================================
+  // NZ-ONLY GUARD
+  // ========================================================================
+  // Second line of defence behind countrycode=nz. The longitude test is
+  // split because NZ straddles the antimeridian — the Chatham Islands sit
+  // at roughly 176.5° WEST, i.e. a negative longitude.
+
+  function isInNewZealand(feature) {
+    const code = feature?.properties?.countrycode;
+    if (code) return code.toUpperCase() === 'NZ';
+
+    const coords = feature?.geometry?.coordinates;
+    if (!Array.isArray(coords)) return false;
+
+    const [lon, lat] = coords;
+    if (typeof lon !== 'number' || typeof lat !== 'number') return false;
+    if (lat > -33.0 || lat < -52.7) return false;
+
+    return (lon >= 165.5 && lon <= 180) || (lon >= -180 && lon <= -175.0);
+  }
+
+
+  // ========================================================================
+  // RESULT LABELLING
+  // ========================================================================
+
+  function primaryLabel(properties) {
+    if (properties.name) return properties.name;
+    if (properties.street) {
+      return properties.housenumber
+        ? `${properties.housenumber} ${properties.street}`
+        : properties.street;
+    }
+    return properties.city || properties.county || properties.state || '';
+  }
+
+  function secondaryLabel(properties) {
+    const name = properties.name;
+    const parts = [];
+
+    if (name && properties.street) {
+      parts.push(properties.housenumber
+        ? `${properties.housenumber} ${properties.street}`
+        : properties.street);
+    }
+
+    for (const field of ['district', 'city', 'county', 'state']) {
+      const value = properties[field];
+      if (value && value !== name && !parts.includes(value)) {
+        parts.push(value);
+      }
+    }
+
+    return parts.slice(0, 3).join(', ');
+  }
+
+  function kindLabel(properties) {
+    const value = properties.osm_value || properties.osm_key || '';
+    if (!value || value === 'yes') return '';
+    return value.replace(/_/g, ' ');
+  }
+
+
+  // ========================================================================
+  // GEOCODER REQUEST
+  // ========================================================================
+
+  async function fetchPlaces(query, sequence) {
+    const center = map.getCenter();
+
+    const url = new URL(GEOCODER_URL);
+    url.searchParams.set('q', query);
+    url.searchParams.set('lang', 'en');
+    url.searchParams.set('limit', String(SEARCH_FETCH_LIMIT));
+    url.searchParams.set('countrycode', 'nz');
+
+    // Bias towards whatever part of the country is currently on screen,
+    // without ignoring prominence — "Wellington" still finds Wellington
+    // even while you're zoomed into Fiordland.
+    url.searchParams.set('lat', center.lat.toFixed(4));
+    url.searchParams.set('lon', center.lng.toFixed(4));
+    url.searchParams.set('zoom', String(Math.round(map.getZoom())));
+
+    if (searchController) searchController.abort();
+    searchController = new AbortController();
+
+    const response = await fetch(url, { signal: searchController.signal });
+    if (!response.ok) throw new Error(`Geocoder returned ${response.status}`);
+
+    const data = await response.json();
+
+    // A slower earlier request may land after a newer one — drop it.
+    if (sequence !== searchRequestSeq) return null;
+
+    const seen = new Set();
+    const features = [];
+
+    for (const feature of (data.features || [])) {
+      if (!isInNewZealand(feature)) continue;
+
+      const properties = feature.properties || {};
+      const label = primaryLabel(properties);
+      if (!label) continue;
+
+      const [lon, lat] = feature.geometry.coordinates;
+      const key = `${label}|${lon.toFixed(4)},${lat.toFixed(4)}`;
+      if (seen.has(key)) continue;
+
+      seen.add(key);
+      features.push(feature);
+      if (features.length >= SEARCH_SHOW_LIMIT) break;
+    }
+
+    return features;
+  }
+
+
+  // ========================================================================
+  // RESULTS LIST
+  // ========================================================================
+
+  function setStatus(message, isError) {
+    searchFeatures = [];
+    searchActiveIndex = -1;
+    searchResultsEl.textContent = '';
+
+    const status = document.createElement('div');
+    status.className = `search-status${isError ? ' is-error' : ''}`;
+    status.textContent = message;
+
+    searchResultsEl.appendChild(status);
+    showResults();
+  }
+
+  function renderResults(features) {
+    searchFeatures = features;
+    searchActiveIndex = -1;
+    searchResultsEl.textContent = '';
+
+    if (!features.length) {
+      setStatus('No matches in New Zealand. Try a different spelling.', false);
+      return;
+    }
+
+    features.forEach((feature, index) => {
+      const properties = feature.properties || {};
+
+      const option = document.createElement('button');
+      option.type = 'button';
+      option.className = 'search-result';
+      option.id = `search-result-${index}`;
+      option.setAttribute('role', 'option');
+      option.setAttribute('aria-selected', 'false');
+      option.tabIndex = -1;
+
+      const name = document.createElement('span');
+      name.className = 'search-result-name';
+      name.textContent = primaryLabel(properties);
+
+      const kind = kindLabel(properties);
+      if (kind) {
+        const kindEl = document.createElement('span');
+        kindEl.className = 'search-result-kind';
+        kindEl.textContent = kind;
+        name.appendChild(kindEl);
+      }
+
+      option.appendChild(name);
+
+      const meta = secondaryLabel(properties);
+      if (meta) {
+        const metaEl = document.createElement('span');
+        metaEl.className = 'search-result-meta';
+        metaEl.textContent = meta;
+        option.appendChild(metaEl);
+      }
+
+      // pointerdown fires before the input's blur, so the selection isn't
+      // lost to the outside-click handler.
+      option.addEventListener('pointerdown', (event) => {
+        event.preventDefault();
+        selectResult(index);
+      });
+
+      option.addEventListener('mousemove', () => setActiveIndex(index, false));
+
+      searchResultsEl.appendChild(option);
+    });
+
+    const credit = document.createElement('div');
+    credit.className = 'search-credit';
+    credit.textContent = 'Place data © OpenStreetMap contributors';
+    searchResultsEl.appendChild(credit);
+
+    showResults();
+  }
+
+  function showResults() {
+    searchResultsEl.hidden = false;
+    searchInputEl.setAttribute('aria-expanded', 'true');
+    searchToggleEl.setAttribute('aria-expanded', 'true');
+  }
+
+  function hideResults() {
+    searchResultsEl.hidden = true;
+    searchInputEl.setAttribute('aria-expanded', 'false');
+    searchInputEl.removeAttribute('aria-activedescendant');
+    searchActiveIndex = -1;
+  }
+
+  function setActiveIndex(index, scrollIntoView) {
+    const options = searchResultsEl.querySelectorAll('.search-result');
+    if (!options.length) return;
+
+    searchActiveIndex = index;
+
+    options.forEach((option, i) => {
+      const active = i === index;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-selected', active ? 'true' : 'false');
+    });
+
+    if (index >= 0) {
+      searchInputEl.setAttribute('aria-activedescendant', `search-result-${index}`);
+      if (scrollIntoView) {
+        options[index].scrollIntoView({ block: 'nearest' });
+      }
+    } else {
+      searchInputEl.removeAttribute('aria-activedescendant');
+    }
+  }
+
+
+  // ========================================================================
+  // FLY TO A RESULT
+  // ========================================================================
+
+  // Nudges the target into the part of the map that isn't covered by the
+  // side panel (desktop) or the bottom sheet (mobile). An offset is used
+  // rather than camera padding because padding passed to flyTo/fitBounds
+  // sticks to the map and would then affect the route's own fitBounds.
+  function viewOffset() {
+    if (window.innerWidth <= MOBILE_BREAKPOINT) {
+      return [0, -Math.round(window.innerHeight * 0.16)];
+    }
+    return [Math.round(Math.min(200, window.innerWidth * 0.18)), 0];
+  }
+
+  function zoomForFeature(properties) {
+    if (properties.housenumber) return 17;
+    if (properties.street) return 16;
+
+    const kind = properties.osm_value || properties.osm_key;
+    return SEARCH_ZOOM_BY_KIND[kind] ?? 13;
+  }
+
+  function showSearchMarker(lngLat) {
+    clearSearchMarker();
+
+    const element = document.createElement('div');
+    element.className = 'search-marker';
+
+    searchMarker = new maplibregl.Marker({ element, anchor: 'center' })
+      .setLngLat(lngLat)
+      .addTo(map);
+
+    searchMarkerTimer = setTimeout(clearSearchMarker, SEARCH_MARKER_MS);
+  }
+
+  function clearSearchMarker() {
+    if (searchMarkerTimer) {
+      clearTimeout(searchMarkerTimer);
+      searchMarkerTimer = null;
+    }
+    if (searchMarker) {
+      searchMarker.remove();
+      searchMarker = null;
+    }
+  }
+
+  function selectResult(index) {
+    const feature = searchFeatures[index];
+    if (!feature) return;
+
+    const properties = feature.properties || {};
+    const [lon, lat] = feature.geometry.coordinates;
+    const offset = viewOffset();
+
+    let center = [lon, lat];
+    let zoom = zoomForFeature(properties);
+
+    // Photon's extent is [minLon, maxLat, maxLon, minLat] — west, north,
+    // east, south. cameraForBounds just computes a camera, it doesn't move
+    // the map or leave padding behind.
+    const extent = properties.extent;
+    if (Array.isArray(extent) && extent.length === 4) {
+      const bounds = new maplibregl.LngLatBounds(
+        [extent[0], extent[3]],
+        [extent[2], extent[1]]
+      );
+      const camera = map.cameraForBounds(bounds, { padding: 60 });
+      if (camera) {
+        center = camera.center;
+        zoom = Math.min(camera.zoom, 15);
+      }
+    }
+
+    map.flyTo({
+      center,
+      zoom: Math.max(map.getMinZoom(), Math.min(zoom, map.getMaxZoom())),
+      offset,
+      duration: 1200,
+    });
+
+    showSearchMarker([lon, lat]);
+
+    searchInputEl.value = primaryLabel(properties);
+    searchClearEl.hidden = false;
+    hideResults();
+
+    // On a phone, get the keyboard and the pill out of the way so the
+    // place you just searched for is actually visible.
+    if (window.innerWidth <= MOBILE_BREAKPOINT) {
+      searchInputEl.blur();
+      closeSearch();
+    }
+  }
+
+
+  // ========================================================================
+  // QUERY HANDLING
+  // ========================================================================
+
+  function cacheGet(key) {
+    return searchCache.get(key);
+  }
+
+  function cacheSet(key, value) {
+    searchCache.set(key, value);
+    if (searchCache.size > SEARCH_CACHE_MAX) {
+      searchCache.delete(searchCache.keys().next().value);
+    }
+  }
+
+  async function runQuery(query) {
+    const key = query.trim().toLowerCase();
+
+    const cached = cacheGet(key);
+    if (cached) {
+      renderResults(cached);
+      return;
+    }
+
+    const sequence = ++searchRequestSeq;
+    searchSpinnerEl.hidden = false;
+
+    try {
+      const features = await fetchPlaces(query, sequence);
+      if (features === null) return;             // superseded by a newer query
+
+      cacheSet(key, features);
+      renderResults(features);
+
+    } catch (error) {
+      if (error.name === 'AbortError') return;   // replaced mid-flight, not a failure
+      console.error('Place search failed:', error);
+      setStatus('Search is unavailable right now. Check your connection and try again.', true);
+
+    } finally {
+      if (sequence === searchRequestSeq) {
+        searchSpinnerEl.hidden = true;
+      }
+    }
+  }
+
+  function scheduleQuery(immediate) {
+    if (searchDebounceId) {
+      clearTimeout(searchDebounceId);
+      searchDebounceId = null;
+    }
+
+    const query = searchInputEl.value.trim();
+    searchClearEl.hidden = query.length === 0;
+
+    if (query.length < SEARCH_MIN_CHARS) {
+      if (searchController) searchController.abort();
+      searchSpinnerEl.hidden = true;
+      hideResults();
+      return;
+    }
+
+    if (immediate) {
+      runQuery(query);
+      return;
+    }
+
+    searchDebounceId = setTimeout(() => {
+      searchDebounceId = null;
+      runQuery(query);
+    }, SEARCH_DEBOUNCE_MS);
+  }
+
+
+  // ========================================================================
+  // OPEN / CLOSE
+  // ========================================================================
+
+  function openSearch() {
+    if (searchOpen) return;
+    searchOpen = true;
+
+    searchEl.classList.add('is-open');
+    searchToggleEl.setAttribute('aria-expanded', 'true');
+    searchInputEl.tabIndex = 0;
+    searchClearEl.tabIndex = 0;
+    searchInputEl.focus();
+  }
+
+  function closeSearch() {
+    if (!searchOpen) return;
+    searchOpen = false;
+
+    searchEl.classList.remove('is-open');
+    searchToggleEl.setAttribute('aria-expanded', 'false');
+    searchInputEl.tabIndex = -1;
+    searchClearEl.tabIndex = -1;
+    searchInputEl.blur();
+    hideResults();
+  }
+
+  function clearSearch() {
+    if (searchDebounceId) {
+      clearTimeout(searchDebounceId);
+      searchDebounceId = null;
+    }
+    if (searchController) searchController.abort();
+
+    searchInputEl.value = '';
+    searchClearEl.hidden = true;
+    searchSpinnerEl.hidden = true;
+    clearSearchMarker();
+    hideResults();
+  }
+
+
+  // ========================================================================
+  // EVENTS
+  // ========================================================================
+
+  searchToggleEl.addEventListener('click', () => {
+    if (!searchOpen) {
+      openSearch();
+    } else if (searchInputEl.value.trim()) {
+      searchInputEl.focus();
+      scheduleQuery(true);
+    } else {
+      closeSearch();
+    }
+  });
+
+  searchInputEl.addEventListener('input', () => scheduleQuery(false));
+
+  searchInputEl.addEventListener('focus', () => {
+    if (searchFeatures.length && searchInputEl.value.trim()) showResults();
+  });
+
+  searchInputEl.addEventListener('keydown', (event) => {
+    const count = searchFeatures.length;
+
+    if (event.key === 'ArrowDown' && count) {
+      event.preventDefault();
+      setActiveIndex((searchActiveIndex + 1) % count, true);
+
+    } else if (event.key === 'ArrowUp' && count) {
+      event.preventDefault();
+      setActiveIndex((searchActiveIndex - 1 + count) % count, true);
+
+    } else if (event.key === 'Enter') {
+      event.preventDefault();
+      if (count) {
+        selectResult(searchActiveIndex >= 0 ? searchActiveIndex : 0);
+      } else {
+        scheduleQuery(true);
+      }
+
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      if (!searchResultsEl.hidden) {
+        hideResults();
+      } else {
+        closeSearch();
+      }
+    }
+  });
+
+  searchClearEl.addEventListener('click', () => {
+    clearSearch();
+    searchInputEl.focus();
+  });
+
+  // Collapse when the map (or anything else) is clicked
+  document.addEventListener('pointerdown', (event) => {
+    if (searchOpen && !searchEl.contains(event.target)) closeSearch();
+  });
+
+})();

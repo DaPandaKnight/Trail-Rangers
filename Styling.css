@@ -1472,3 +1472,304 @@ label:focus-visible,
 .loading-content p {
     opacity: 0.8;
 }
+
+/* =========================================================
+   NZ PLACE SEARCH
+   Top-right on desktop and mobile. Collapsed it is just a
+   round magnifier button; clicking it grows the pill open.
+   Sits above #panel (z 10) and popups (z 20), below the
+   loading screen (z 99999).
+   ========================================================= */
+
+.map-search {
+  position: fixed;
+  top: calc(18px + env(safe-area-inset-top, 0px));
+  right: 18px;
+  z-index: 30;
+
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+/* The pill itself. Width is animated; overflow clips the input
+   while collapsed. The results list lives outside it so it is
+   never clipped. */
+.search-shell {
+  display: flex;
+  align-items: center;
+
+  width: 46px;
+  padding: 3px;
+  overflow: hidden;
+
+  background: rgba(var(--panel-rgb), 0.92);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  box-shadow: 0 2px 16px rgba(80, 60, 30, 0.12);
+
+  transition: width 0.28s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.map-search.is-open .search-shell {
+  width: min(340px, calc(100vw - 36px));
+}
+
+/* Magnifier button */
+.search-toggle {
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+
+  display: grid;
+  place-items: center;
+
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+
+  transition: color 0.15s, background 0.15s;
+}
+
+.search-toggle:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.map-search.is-open .search-toggle { color: var(--accent); }
+
+.search-icon {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.1;
+  stroke-linecap: round;
+}
+
+/* Text field */
+.search-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 38px;
+
+  border: 0;
+  outline: none;
+  background: transparent;
+
+  font-family: 'DM Mono', monospace;
+  font-size: 0.82rem;
+  color: var(--text);
+  padding: 0 4px;
+}
+
+.search-input::placeholder {
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+/* Reuses the existing @keyframes spin from the loading screen */
+.search-spinner {
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+}
+
+/* An author `display` beats the browser's [hidden] rule, so these have to
+   be restated or the spinner never goes away. */
+.search-spinner[hidden],
+.search-clear[hidden],
+.search-results[hidden] { display: none; }
+
+.search-spinner::after {
+  content: '';
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+.search-clear {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  font-family: 'DM Mono', monospace;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+
+  transition: color 0.15s, background 0.15s;
+}
+
+.search-clear:hover {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+/* Results dropdown */
+.search-results {
+  width: min(340px, calc(100vw - 36px));
+  max-height: min(46vh, 380px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  padding: 6px;
+
+  background: rgba(var(--panel-rgb), 0.96);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 8px 28px rgba(80, 60, 30, 0.16);
+}
+
+.search-result {
+  display: block;
+  width: 100%;
+  text-align: left;
+
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  padding: 9px 11px;
+  cursor: pointer;
+
+  font-family: 'DM Mono', monospace;
+  transition: background 0.12s;
+}
+
+.search-result + .search-result { margin-top: 2px; }
+
+.search-result:hover,
+.search-result.is-active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.search-result-name {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.search-result-kind {
+  margin-left: 7px;
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent2);
+}
+
+.search-result-meta {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.66rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.search-status {
+  padding: 12px 11px;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--muted);
+}
+
+.search-status.is-error { color: #a82727; }
+
+.search-credit {
+  margin-top: 6px;
+  padding: 7px 11px 3px;
+  border-top: 1px solid var(--border);
+  font-size: 0.55rem;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.search-credit a { color: var(--muted); }
+
+/* Keyboard focus. The site-wide input:focus-visible ring would draw a
+   square inside the round pill, so the pill itself carries the focus
+   state instead. */
+.search-toggle:focus-visible,
+.search-clear:focus-visible,
+.search-result:focus-visible {
+  outline: 2px solid var(--accent2);
+  outline-offset: 2px;
+}
+
+.search-input:focus-visible { outline: none; }
+
+.search-shell:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 2px 16px rgba(80, 60, 30, 0.12),
+              0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+
+/* Marker dropped on the chosen place. Deliberately a ring rather than a
+   teardrop pin so it can never be mistaken for a start/end/via route pin. */
+.search-marker {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+.search-marker::before {
+  content: '';
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 0 0 2.5px rgba(var(--panel-rgb), 0.95);
+}
+
+.search-marker::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  animation: rw-search-pulse 2s ease-out infinite;
+}
+
+@keyframes rw-search-pulse {
+  0%   { transform: scale(0.55); opacity: 0.55; }
+  100% { transform: scale(1.45); opacity: 0; }
+}
+
+/* Mobile: same top-right corner, wider when open */
+@media (max-width: 768px) {
+
+  .map-search {
+    top: calc(12px + env(safe-area-inset-top, 0px));
+    right: 12px;
+  }
+
+  .map-search.is-open .search-shell,
+  .search-results {
+    width: calc(100vw - 24px);
+  }
+
+  .search-results { max-height: 45dvh; }
+
+  /* 16px stops iOS Safari zooming the whole page in on focus */
+  .search-input { font-size: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .search-shell { transition: none; }
+  .search-marker::after { animation: none; opacity: 0.35; }
+}
