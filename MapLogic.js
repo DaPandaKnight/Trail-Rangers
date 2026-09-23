@@ -117,10 +117,7 @@ window.addEventListener("orientationchange", () => {
   setTimeout(resizeMap, 250);
 });
 
-map.addControl(new maplibregl.AttributionControl({
-  compact: true,
-  customAttribution: '© <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a>'
-}), 'bottom-left');
+// Attribution is presented in the single combined notice in RidgeWalkerHome.html.
 
 
 // ========================================================================
