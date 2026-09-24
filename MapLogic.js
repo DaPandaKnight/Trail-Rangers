@@ -121,6 +121,28 @@ window.addEventListener("orientationchange", () => {
 
 
 // ========================================================================
+// LAMBDA WARM-UP
+// ========================================================================
+// Fired once, immediately — well before the user places any waypoints or
+// clicks Generate Route. Lets the backend's expensive one-time cold-start
+// work (loading the national water/stream/bridge dataset, JIT-compiling
+// the pathfinding core) happen while they're just looking at the map,
+// rather than after they click Generate and are actively watching a
+// spinner. Same total backend cost either way — this only moves WHEN
+// it's paid to a point in the experience where it's invisible.
+//
+// Genuine fire-and-forget: nothing here should ever block, delay, or
+// visibly affect anything else on the page, so failures are swallowed
+// silently — worst case, the first real route request just pays the
+// cold-start cost itself, exactly as it would without this at all.
+fetch(ROUTE_API_URL, {
+  method: 'POST',
+  headers: {'Content-Type': 'application/json'},
+  body: JSON.stringify({warm: true}),
+}).catch(() => {});
+
+
+// ========================================================================
 // TOPOGRAPHIC MAP
 // ========================================================================
 
