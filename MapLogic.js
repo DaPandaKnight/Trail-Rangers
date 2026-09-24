@@ -419,7 +419,7 @@ function updateRouteHint() {
     routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint, or add waypoints as needed';
   } else {
     routeHintEl.textContent =
-      `Ready — hit Generate Route to pass through ${waypoints.length} waypoints.`;
+      `Ready — hit Generate Route to pass through ${waypoints.length - 2} waypoints.`;
   }
 }
 

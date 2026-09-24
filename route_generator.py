@@ -98,6 +98,16 @@ STREAM_PROXIMITY_WEIGHT = 1.5      # (1.5 was original) Soft cost multiplier app
                                  # accumulates real cost.
 STREAM_BUFFER_M = 15.0           # (15 was original) Distance from a stream centerline within which the
                                  # proximity penalty applies.
+BRIDGE_BUFFER_M = 8.0            # Distance from a bridge's true centerline within which a crossing
+                                 # is treated as legitimate — matches the value used to precompute
+                                 # bridge geometry offline in prefetch_nz_water_data.py.
+BRIDGE_CENTERING_PENALTY = 0.4   # Soft cost multiplier added as a crossing drifts away from a
+                                 # bridge's true centerline: 1.0x exactly on the line, rising to
+                                 # (1.0 + this) at the edge of BRIDGE_BUFFER_M. Purely a "hug the
+                                 # real structure" bias for a visually accurate route, not a safety
+                                 # measure — walking anywhere on a real bridge's surface is equally
+                                 # safe. 0 disables centering entirely (flat cost anywhere in the
+                                 # buffer, matching the original, less precise behavior).
 
 # 16-point compass: the 8 standard king-move directions (45 degrees apart)
 # plus 8 knight-style half-step directions, which allow the path to bend
@@ -856,36 +866,36 @@ def apply_water_mask(cost_arrays: dict, water_mask: np.ndarray,
     a knight's-move step can be up to ~22m at 10m resolution, so a water
     gap NARROWER than the step can sit entirely between two dry cell
     centers, letting the path silently jump over real water a hiker
-    could never actually cross there. When lats/lons and
-    merged_water_geometry are provided, this also checks several points
-    ALONG each candidate step against the actual (un-rasterized) water
-    geometry, catching gaps the endpoint-only check would miss — see
-    _compute_step_crossing_blocked's docstring for why multiple sample
-    points, not just one.
+    could never actually cross there. When lats/lons and geometry are
+    provided, this also checks several points ALONG each candidate step
+    against the actual (un-rasterized) water geometry, catching gaps the
+    endpoint-only check would miss — see _compute_step_crossing_blocked's
+    docstring for why multiple sample points, not just one.
 
-    merged_water_geometry vs. local_water_geometry — these are
-    DELIBERATELY separate, not redundant:
-    - merged_water_geometry is used for the actual contains_xy crossing
-      checks. It's fine for this to be the enormous precomputed NATIONAL
-      union (all 61,855 water polygons) — contains_xy scales with query
-      point count, not geometry complexity.
-    - local_water_geometry is what the candidate-region pre-filter
-      buffers (see _compute_candidate_crossing_region). This MUST be a
-      small, per-bbox-local geometry, not the national union — .buffer()
-      genuinely scales with geometry complexity, and buffering the whole
-      country's water data on every single request caused a real
-      multi-minute hang in production. If omitted, falls back to
-      merged_water_geometry (correct but potentially catastrophically
-      slow if that happens to be a large precomputed union — always pass
-      a local one when the caller has access to a bbox-scoped subset).
+    local_water_geometry is used for BOTH the candidate-region pre-filter
+    AND the actual per-sample correctness check, whenever it's available
+    — CORRECTED from an earlier version that used the enormous national
+    union for the correctness check specifically, on the assumption that
+    contains_xy "scales with query point count, not geometry complexity."
+    That assumption turned out to be incomplete: real profiling on a
+    large query (see project notes) showed the equivalent stream check
+    taking ~9s against the national buffered stream geometry — GEOS's
+    internal indexing helps, but a genuinely enormous, highly complex
+    national geometry still costs measurably more per query than the
+    small, local, already-clipped one, which is provably just as correct
+    for this query (build_grid_state's local clip already pads generously
+    enough that nothing outside it could affect this query's grid).
+    merged_water_geometry remains the fallback when no local geometry is
+    available (e.g. the Overpass live-fallback path has no separate
+    "local" vs "global" distinction to make).
     """
     water_float = water_mask.astype(np.float64)
-    check_crossings = (merged_water_geometry is not None and lats is not None and lons is not None)
-    buffer_source = local_water_geometry if local_water_geometry is not None else merged_water_geometry
+    correctness_geometry = local_water_geometry if local_water_geometry is not None else merged_water_geometry
+    check_crossings = (correctness_geometry is not None and lats is not None and lons is not None)
 
     candidate_region = None
     if check_crossings:
-        candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+        candidate_region = _compute_candidate_crossing_region(correctness_geometry, lats, lons)
 
     for di, dj in DIRECTIONS:
         neighbor_is_water = shifted(water_float, di, dj)
@@ -894,7 +904,7 @@ def apply_water_mask(cost_arrays: dict, water_mask: np.ndarray,
 
         if check_crossings:
             crossing_blocked = _compute_step_crossing_blocked(
-                merged_water_geometry, lats, lons, di, dj, candidate_region=candidate_region
+                correctness_geometry, lats, lons, di, dj, candidate_region=candidate_region
             )
             blocked = blocked | crossing_blocked
 
@@ -937,23 +947,32 @@ def apply_stream_proximity_penalty(cost_arrays: dict, stream_mask: np.ndarray,
     zone without either endpoint touching it would otherwise silently
     dodge the soft penalty entirely, not just the hard-block case.
 
-    local_stream_geometry: same reasoning as apply_water_mask's
-    local_water_geometry — the candidate-region pre-filter's .buffer()
-    call must run on a small, per-bbox-local geometry, never the
-    enormous precomputed national stream union (93,891 lines), which
-    caused a real multi-minute hang in production when buffered
-    per-request.
+    local_stream_geometry: same fix as apply_water_mask's
+    local_water_geometry — now used for BOTH the candidate-region
+    pre-filter AND the actual per-sample correctness check, not just the
+    pre-filter. Real profiling on a large query (see project notes)
+    found this the single biggest cost in the whole cost-array pipeline:
+    ~9 seconds spent checking against the enormous national buffered
+    stream union (94,835 real, often long and winding rivers, whose
+    buffering produces many more vertices than water's simpler polygons)
+    — versus ~1s for the structurally identical water check, on the
+    SAME query. Must already be BUFFERED by buffer_m (matching
+    global_stream_buffer_union's own precomputed semantics) — build_grid_state
+    buffers the small local clip cheaply per-request, unlike the national
+    version, which is precomputed offline specifically because buffering
+    IT per-request was the original 677-second bug this whole local/
+    global split was built to avoid in the first place.
     """
     if weight == 1.0:
         return cost_arrays
 
     stream_float = stream_mask.astype(np.float64)
-    check_crossings = (merged_stream_geometry is not None and lats is not None and lons is not None)
-    buffer_source = local_stream_geometry if local_stream_geometry is not None else merged_stream_geometry
+    correctness_geometry = local_stream_geometry if local_stream_geometry is not None else merged_stream_geometry
+    check_crossings = (correctness_geometry is not None and lats is not None and lons is not None)
 
     candidate_region = None
     if check_crossings:
-        candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+        candidate_region = _compute_candidate_crossing_region(correctness_geometry, lats, lons)
 
     for di, dj in DIRECTIONS:
         neighbor_in_zone = shifted(stream_float, di, dj)
@@ -962,7 +981,7 @@ def apply_stream_proximity_penalty(cost_arrays: dict, stream_mask: np.ndarray,
 
         if check_crossings:
             crossing_in_zone = _compute_step_crossing_blocked(
-                merged_stream_geometry, lats, lons, di, dj, candidate_region=candidate_region
+                correctness_geometry, lats, lons, di, dj, candidate_region=candidate_region
             )
             in_zone = in_zone | crossing_in_zone
 
@@ -970,9 +989,39 @@ def apply_stream_proximity_penalty(cost_arrays: dict, stream_mask: np.ndarray,
     return cost_arrays
 
 
+def _bridge_line_segments(local_bridge_lines: list) -> list:
+    """
+    Decomposes each local (already query-area-clipped) bridge geometry
+    into its individual consecutive-vertex segments — (ax, ay, bx, by)
+    tuples in raw lon/lat. A bridge is usually a simple 2-vertex line,
+    but this handles a few intermediate vertices along a slightly curved
+    crossing correctly, and handles the case where clipping a line to
+    the query bbox split it into a MultiLineString.
+
+    Computed once per apply_bridge_crossings() call (not once per
+    direction) since decomposition doesn't depend on direction at all.
+    """
+    segments = []
+    for geom in local_bridge_lines:
+        if geom is None or geom.is_empty:
+            continue
+        lines = list(geom.geoms) if geom.geom_type == "MultiLineString" else [geom]
+        for line in lines:
+            if line.is_empty or line.geom_type != "LineString":
+                continue
+            coords = list(line.coords)
+            for (ax, ay), (bx, by) in zip(coords[:-1], coords[1:]):
+                if (ax, ay) != (bx, by):  # skip degenerate zero-length segments
+                    segments.append((ax, ay, bx, by))
+    return segments
+
+
 def apply_bridge_crossings(cost_arrays: dict, original_cost_arrays: dict,
                              lats: np.ndarray, lons: np.ndarray,
-                             merged_bridge_geometry, local_bridge_geometry=None) -> dict:
+                             local_bridge_lines: list,
+                             buffer_m: float = BRIDGE_BUFFER_M,
+                             centering_penalty: float = BRIDGE_CENTERING_PENALTY,
+                             n_samples: int = 3) -> dict:
     """
     Fix #3: restores the ORIGINAL (pre-water-masking) cost for any edge
     that crosses a real, mapped bridge — even though apply_water_mask
@@ -986,32 +1035,163 @@ def apply_bridge_crossings(cost_arrays: dict, original_cost_arrays: dict,
 
     original_cost_arrays must be a snapshot taken BEFORE
     apply_water_mask/apply_stream_proximity_penalty ran (see
-    build_grid_state) — restoring to that snapshot, rather than to some
-    made-up "bridge cost", means walking a bridge costs exactly what the
-    terrain/distance model already says that step should cost, nothing
-    more or less.
+    build_grid_state) — restoring toward that snapshot, rather than to
+    some made-up "bridge cost", means walking a bridge costs close to
+    what the terrain/distance model already says that step should cost,
+    scaled only by the centering multiplier below.
 
-    Reuses _compute_step_crossing_blocked and
-    _compute_candidate_crossing_region — same multi-sample-along-the-step
-    logic used to detect a water crossing, just applied to bridge
-    geometry instead, and used to ALLOW rather than block. Same local-
-    geometry-for-buffering requirement as apply_water_mask — see its
-    docstring and build_grid_state's clipping step for why merged_bridge_geometry
-    (which is fine to be a national precomputed union for the cheap
-    contains_xy checks) must NOT be what gets passed to the buffer step.
+    REWRITTEN from an earlier flat-buffer version, which had two real
+    problems this fixes at once:
+
+    1. CORNER-CUTTING: a flat buffer around a bridge line is built by
+       .buffer()-ing it, which puts ROUNDED CAPS on both ends — a
+       half-circle bulge extending past where the bridge actually
+       connects to land. A path could clip through that bulge and reach
+       the bridge partway along its length from an angle that doesn't
+       correspond to a real approach. Fixed here with genuine line-
+       segment projection: for each segment (ax,ay)-(bx,by), a point's
+       unclamped position along the segment (t_raw, via the standard
+       dot-product projection formula) is checked to fall within [0, 1]
+       BEFORE that segment is allowed to count at all — a point whose
+       true closest approach is beyond either endpoint is correctly
+       excluded, leaving it as genuinely blocked water, not a false
+       bridge crossing.
+    2. NO CENTERING: the old flat buffer treated every point inside it
+       as equally good, with no pull toward the bridge's true line.
+       Fixed by computing a real perpendicular distance (in meters, via
+       a local equirectangular approximation using meters_per_degree at
+       the grid's own latitude — the same approach already used
+       elsewhere in this file for short local distances) from each
+       sample point to its nearest valid segment, then scaling cost
+       smoothly from 1.0x at the centerline up to (1.0 + centering_penalty)x
+       at buffer_m — biasing A* to hug the true line rather than treating
+       the whole buffer as flat.
+
+    EFFICIENCY: an initial version ran the full 16-directions x n_samples
+    computation across the ENTIRE query grid for every segment, which
+    measured at ~68 seconds on a 2-million-node grid with 20 bridges —
+    far too slow, caught before shipping. Bridges are geographically
+    tiny (tens of meters) relative to a query grid that can span
+    kilometers, so almost none of a large grid can possibly be affected
+    by any one segment. Each segment's own padded bounding box is now
+    computed first, and all direction/sample work runs only on that
+    small subgrid slice — every cell outside it would have computed
+    dist_m = inf anyway (via the projection validity check), so this
+    changes no result, only how much work it takes to get there.
+    Everything here is plain vectorized NumPy arithmetic (dot products,
+    clipping, sqrt) against a small number of short local segments —
+    never a shapely/GEOS call, and never the earlier class of mistake
+    where an expensive geometry operation ran against a national-scale,
+    unclipped feature. local_bridge_lines must already be the small,
+    query-area-clipped list build_grid_state prepares (mirroring the
+    exact same clip-before-processing requirement apply_water_mask's
+    local_water_geometry has, and for the identical reason: bounding
+    real-world feature length before any per-request work touches it).
     """
-    check_crossings = (merged_bridge_geometry is not None and lats is not None and lons is not None)
-    if not check_crossings:
+    segments = _bridge_line_segments(local_bridge_lines)
+    if not segments:
         return cost_arrays
 
-    buffer_source = local_bridge_geometry if local_bridge_geometry is not None else merged_bridge_geometry
-    candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+    n_rows, n_cols = len(lats), len(lons)
+    lat_step = lats[1] - lats[0] if n_rows > 1 else 0.0
+    lon_step = lons[1] - lons[0] if n_cols > 1 else 0.0
+    mid_lat = float(np.mean(lats))
+    m_per_deg_lat, m_per_deg_lon = meters_per_degree(mid_lat)
+
+    # best_dist_m accumulates, per direction, the minimum valid
+    # distance-to-bridge found across ALL segments — built up
+    # incrementally, one small subgrid slice at a time, as each segment
+    # is processed below.
+    best_dist_m = {(di, dj): np.full((n_rows, n_cols), np.inf) for di, dj in DIRECTIONS}
+
+    buffer_deg_lat = buffer_m / m_per_deg_lat
+    buffer_deg_lon = buffer_m / m_per_deg_lon
+
+    for ax, ay, bx, by in segments:
+        # RESTRICT ALL WORK BELOW TO A SMALL BOUNDING-BOX SUBGRID AROUND
+        # THIS ONE SEGMENT — this is the actual efficiency fix. An
+        # earlier version ran the full 16-directions x n_samples
+        # computation across the ENTIRE grid for every segment,
+        # regardless of how far away most of it was — measured at ~68s
+        # on a 2-million-node grid with 20 bridges, far too slow to
+        # ship. Bridges are geographically tiny (tens of meters) relative
+        # to a query grid that can span kilometers, so almost none of
+        # the grid can possibly be affected by any one segment. Slicing
+        # to a small subgrid first, then running the same per-direction,
+        # per-sample math only on that slice, cuts the actual work by
+        # orders of magnitude without changing any result — every cell
+        # outside a segment's padded bounding box would have computed
+        # dist_m = inf (via the projection validity check) anyway; this
+        # just skips computing that in the first place.
+        min_lon_seg, max_lon_seg = min(ax, bx), max(ax, bx)
+        min_lat_seg, max_lat_seg = min(ay, by), max(ay, by)
+        # Padding: the buffer distance itself, plus margin for sample
+        # points that can sit up to ~2 cells away from their own cell
+        # (the longest knight's-move direction).
+        pad_lon = buffer_deg_lon * 1.5 + abs(lon_step) * 2
+        pad_lat = buffer_deg_lat * 1.5 + abs(lat_step) * 2
+
+        col_lo = int(np.floor((min_lon_seg - pad_lon - lons[0]) / lon_step)) if lon_step else 0
+        col_hi = int(np.ceil((max_lon_seg + pad_lon - lons[0]) / lon_step)) + 1 if lon_step else n_cols
+        row_lo = int(np.floor((min_lat_seg - pad_lat - lats[0]) / lat_step)) if lat_step else 0
+        row_hi = int(np.ceil((max_lat_seg + pad_lat - lats[0]) / lat_step)) + 1 if lat_step else n_rows
+
+        row_lo = max(0, row_lo)
+        row_hi = min(n_rows, row_hi)
+        col_lo = max(0, col_lo)
+        col_hi = min(n_cols, col_hi)
+
+        if row_lo >= row_hi or col_lo >= col_hi:
+            continue  # this segment's bounding box doesn't overlap the grid at all
+
+        sub_rows = np.arange(row_lo, row_hi)
+        sub_cols = np.arange(col_lo, col_hi)
+        sub_shape = (len(sub_rows), len(sub_cols))
+        sub_slice = np.s_[row_lo:row_hi, col_lo:col_hi]
+
+        ax_m, ay_m = ax * m_per_deg_lon, ay * m_per_deg_lat
+        bx_m, by_m = bx * m_per_deg_lon, by * m_per_deg_lat
+        abx, aby = bx_m - ax_m, by_m - ay_m
+        ab_dot_ab = abx * abx + aby * aby
+        if ab_dot_ab == 0:
+            continue  # degenerate zero-length segment
+
+        for di, dj in DIRECTIONS:
+            for k in range(1, n_samples + 1):
+                t = k / (n_samples + 1)  # e.g. n_samples=3 -> t in {0.25, 0.5, 0.75}
+                sample_row = sub_rows + di * t
+                sample_col = sub_cols + dj * t
+                sample_lat_1d = lats[0] + sample_row * lat_step
+                sample_lon_1d = lons[0] + sample_col * lon_step
+                sample_x_m = np.broadcast_to((sample_lon_1d * m_per_deg_lon)[None, :], sub_shape)
+                sample_y_m = np.broadcast_to((sample_lat_1d * m_per_deg_lat)[:, None], sub_shape)
+
+                apx = sample_x_m - ax_m
+                apy = sample_y_m - ay_m
+                # Standard point-onto-segment projection: t_raw is the
+                # UNCLAMPED position along the segment (0=at A, 1=at B,
+                # <0 or >1 means the true closest approach is beyond an
+                # endpoint) — this is what lets corner-cutting be
+                # detected and excluded, unlike shapely's project(),
+                # which always clamps and so can't tell the difference.
+                t_raw = (apx * abx + apy * aby) / ab_dot_ab
+                valid = (t_raw >= 0.0) & (t_raw <= 1.0)
+
+                t_clamped = np.clip(t_raw, 0.0, 1.0)
+                closest_x = ax_m + t_clamped * abx
+                closest_y = ay_m + t_clamped * aby
+                dist_m = np.sqrt((sample_x_m - closest_x) ** 2 + (sample_y_m - closest_y) ** 2)
+                dist_m = np.where(valid, dist_m, np.inf)
+
+                current = best_dist_m[(di, dj)][sub_slice]
+                best_dist_m[(di, dj)][sub_slice] = np.minimum(current, dist_m)
 
     for di, dj in DIRECTIONS:
-        on_bridge = _compute_step_crossing_blocked(
-            merged_bridge_geometry, lats, lons, di, dj, candidate_region=candidate_region
-        )
-        cost_arrays[(di, dj)] = np.where(on_bridge, original_cost_arrays[(di, dj)], cost_arrays[(di, dj)])
+        d = best_dist_m[(di, dj)]
+        within_buffer = d <= buffer_m
+        multiplier = 1.0 + centering_penalty * np.clip(d / buffer_m, 0.0, 1.0)
+        restored = original_cost_arrays[(di, dj)] * multiplier
+        cost_arrays[(di, dj)] = np.where(within_buffer, restored, cost_arrays[(di, dj)])
 
     return cost_arrays
 
@@ -1366,7 +1546,22 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
             clipped_streams = [l.intersection(clip_box) for l in stream_lines]
             clipped_streams = [l for l in clipped_streams if not l.is_empty]
             local_water_union = unary_union(clipped_water) if clipped_water else None
-            local_stream_union = unary_union(clipped_streams) if clipped_streams else None
+            local_stream_union_raw = unary_union(clipped_streams) if clipped_streams else None
+
+            # Buffered here, cheaply, since this is only ever the small
+            # LOCAL clip — matching global_stream_buffer_union's own
+            # precomputed semantics (a buffer_m-wide corridor, not a bare
+            # centerline), now that this local geometry is also used for
+            # apply_stream_proximity_penalty's actual correctness check,
+            # not just its candidate-region pre-filter (see that
+            # function's docstring for why: checking against the
+            # national buffer union there measured ~9s on a large real
+            # query, the single biggest cost in the whole pipeline).
+            local_stream_union = None
+            if local_stream_union_raw is not None:
+                m_per_deg_lat_local, m_per_deg_lon_local = meters_per_degree(mid_lat)
+                stream_buffer_deg = STREAM_BUFFER_M / min(m_per_deg_lat_local, m_per_deg_lon_local)
+                local_stream_union = local_stream_union_raw.buffer(stream_buffer_deg)
         else:
             water_geometry, water_mask = build_water_mask(water_polygons, lats, lons)
             stream_geometry, stream_mask = build_stream_proximity_mask(stream_lines, lats, lons)
@@ -1417,12 +1612,13 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
 
     # Fix #3: restore bridge crossings AFTER water masking, not before —
     # this is deliberately an allow-list layered on top of the block, not
-    # a way of avoiding it in the first place. Same clip-before-buffer
+    # a way of avoiding it in the first place. Same clip-before-processing
     # requirement as water/stream (see build_grid_state's water/stream
     # clipping comment above) — bridges are far fewer nationally, but the
-    # exact same class of mistake (buffering an unclipped, potentially
-    # long feature) applies equally here, so it's applied proactively
-    # rather than waiting to find out the hard way a second time.
+    # exact same class of mistake (an expensive per-request operation
+    # touching an unclipped, potentially long feature) applies equally
+    # here, so it's applied proactively rather than waiting to find out
+    # the hard way a second time.
     n_bridge_features = len(bridge_lines)
     if bridge_lines:
         min_lat_b, min_lon_b, max_lat_b, max_lon_b = bbox
@@ -1431,20 +1627,13 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
                                 max_lon_b + bridge_clip_pad, max_lat_b + bridge_clip_pad)
         clipped_bridges = [l.intersection(bridge_clip_box) for l in bridge_lines]
         clipped_bridges = [l for l in clipped_bridges if not l.is_empty]
-        local_bridge_union = unary_union(clipped_bridges) if clipped_bridges else None
 
-        merged_bridge_geometry = None
-        if _local_water_index is not None:
-            merged_bridge_geometry = _local_water_index.get("global_bridge_buffer_union")
-        if merged_bridge_geometry is None:
-            # No precomputed national bridge buffer available (e.g. an
-            # old-format pickle) — the local (already clipped, already
-            # small) union is a fine, safe substitute for the
-            # correctness check too in this fallback case.
-            merged_bridge_geometry = local_bridge_union
-
-        apply_bridge_crossings(cost_arrays, original_cost_arrays, lats, lons,
-                                 merged_bridge_geometry, local_bridge_geometry=local_bridge_union)
+        # apply_bridge_crossings works directly from these individual,
+        # already-clipped LineStrings (decomposing each into its own
+        # segments for proper projection math) — no merged/buffered
+        # geometry needed for this any more; see its docstring for why
+        # the old flat-buffer approach was replaced.
+        apply_bridge_crossings(cost_arrays, original_cost_arrays, lats, lons, clipped_bridges)
     t3 = time.time()
 
     if verbose:
@@ -1856,6 +2045,54 @@ def _waypoint_label(index: int, n_waypoints: int) -> str:
     return f"Waypoint {index}"
 
 
+def _find_water_blocked_waypoint(waypoints: list[tuple[float, float]]) -> dict | None:
+    """
+    Cheap, grid-free check: does ANY waypoint fall inside the precomputed
+    NATIONAL water/snow geometry, checked directly via a single
+    point-in-polygon test per waypoint against the already-loaded
+    geometry — entirely bypassing DEM fetch, grid construction, and cost
+    array computation.
+
+    This exists because of a real, measured problem: the equivalent
+    check inside route_between_waypoints only runs AFTER build_grid_state
+    has already done its full expensive pipeline for that specific query
+    — DEM fetch, cost arrays, water/stream/bridge masking — so a
+    fundamentally instant "this point is inside a lake" rejection was
+    still taking over 30 seconds on a real large query, because the
+    entire grid got built first regardless. This check runs before any
+    of that, so an obviously-bad waypoint can be rejected in
+    milliseconds instead of after paying the full per-query grid-build
+    cost for nothing.
+
+    Returns an error dict (same shape route_between_waypoints already
+    returns for this case) for the FIRST blocked waypoint found, or None
+    if every waypoint checked out — including the case where no local
+    dataset is loaded yet, in which case this is a no-op and
+    route_between_waypoints' own in-grid check remains the correct,
+    still-necessary fallback (it has to build the grid anyway in that
+    case, since there's no precomputed national geometry to check
+    against cheaply).
+    """
+    index = _load_local_water_index()
+    if index is None:
+        return None
+
+    global_water = index.get("global_water_union")
+    if global_water is None:
+        return None
+
+    n_waypoints = len(waypoints)
+    for i, (lon, lat) in enumerate(waypoints):
+        if shapely.contains_xy(global_water, lon, lat):
+            label = _waypoint_label(i, n_waypoints)
+            return {
+                "ok": False,
+                "error": f"{label} falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "retry_worthy": False,
+            }
+    return None
+
+
 def route_via_waypoints(waypoints: list[tuple[float, float]],
                           node_budget: int = DEFAULT_NODE_BUDGET,
                           padding_frac: float = 0.3,
@@ -1942,11 +2179,20 @@ def route_with_waypoints(waypoint_a: tuple[float, float],
     via point in order, and then waypoint_b — useful for a user-placed
     detour that the lowest-cost route would not otherwise take.
     """
+    all_waypoints = [waypoint_a] + list(via or []) + [waypoint_b]
+
+    # Cheap, grid-free rejection for an obviously-blocked waypoint — see
+    # _find_water_blocked_waypoint's docstring for why this matters: the
+    # equivalent in-grid check happens far too late otherwise, after an
+    # entire expensive grid has already been built for nothing.
+    early_check = _find_water_blocked_waypoint(all_waypoints)
+    if early_check is not None:
+        return early_check
+
     if not via:
         return route_any_two_points(waypoint_a, waypoint_b, node_budget=node_budget,
                                       padding_frac=padding_frac)
 
-    all_waypoints = [waypoint_a] + list(via) + [waypoint_b]
     return route_via_waypoints(all_waypoints, node_budget=node_budget, padding_frac=padding_frac)
 
 
