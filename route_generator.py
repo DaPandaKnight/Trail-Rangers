@@ -1108,9 +1108,31 @@ def route_between_waypoints(grid_state: dict,
     lats, lons = grid_state["lats"], grid_state["lons"]
     cost_arrays = grid_state["cost_arrays"]
     elevation_grid = grid_state["elevation_grid"]
+    water_mask = grid_state.get("water_mask")
 
     start_rc = find_nearest_rc(lats, lons, waypoint_a[0], waypoint_a[1])
     goal_rc = find_nearest_rc(lats, lons, waypoint_b[0], waypoint_b[1])
+
+    # Checked BEFORE running A* — a waypoint that itself snaps to a
+    # mapped water/snow cell is a fundamentally different failure than
+    # "no path found": expanding the search area can never fix it (the
+    # point doesn't move), so retry_worthy=False tells the caller's
+    # retry loop to stop immediately rather than burn 2 more expensive
+    # attempts on something a bigger box was never going to solve. Also
+    # skips a wasted A* call entirely for this case.
+    if water_mask is not None:
+        if water_mask[start_rc]:
+            return {
+                "ok": False,
+                "error": "Start point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "retry_worthy": False,
+            }
+        if water_mask[goal_rc]:
+            return {
+                "ok": False,
+                "error": "End point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "retry_worthy": False,
+            }
 
     t0 = time.time()
     path_rc = astar_on_grid(cost_arrays, lats, lons, start_rc, goal_rc)
@@ -1252,16 +1274,28 @@ def _check_walkable_connectivity(water_mask, start_rc: tuple[int, int],
     return False
 
 
-def route_any_two_points(waypoint_a: tuple[float, float],
-                           waypoint_b: tuple[float, float],
-                           node_budget: int = DEFAULT_NODE_BUDGET,
-                           padding_frac: float = 0.3,
-                           max_padding_attempts: int = 3,
-                           padding_growth: float = 2.0,
-                           max_attempt_seconds: float = 45.0) -> dict:
+def _route_with_padding_retry(waypoints: list[tuple[float, float]],
+                                attempt_fn,
+                                node_budget: int = DEFAULT_NODE_BUDGET,
+                                padding_frac: float = 0.3,
+                                max_padding_attempts: int = 3,
+                                padding_growth: float = 2.0,
+                                max_attempt_seconds: float = 45.0) -> dict:
     """
-    Performs a free search between two waypoints anywhere in New Zealand,
-    building a bounding box and grid sized to the query.
+    Shared retry-with-expanding-search-area core, used by BOTH
+    route_any_two_points (2 waypoints) and route_via_waypoints (N
+    waypoints via one shared grid) — extracted so this logic exists in
+    exactly one place rather than being duplicated between them.
+
+    attempt_fn(grid_state) -> dict is called once per attempt and must
+    return the same {"ok": bool, ...} shape route_between_waypoints does.
+    For a 2-point route that's just route_between_waypoints itself; for
+    a multi-waypoint route it should attempt every leg using the given
+    grid_state and return {"ok": False, "error": ..., "retry_worthy": ...}
+    if even one leg fails, since a partial multi-waypoint route isn't
+    usable. Propagate "retry_worthy" from whichever leg failed (see
+    route_between_waypoints) so a water-blocked waypoint anywhere in the
+    chain still short-circuits correctly, not just for the 2-point case.
 
     If no path is found, the search area is retried with progressively
     larger padding (multiplied by padding_growth each time, up to
@@ -1272,6 +1306,13 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     a large body of water. Each retry only happens for the routes that
     actually need it; a normal inland route still succeeds on the first,
     cheap, tightly-bounded attempt.
+
+    RETRY-WORTHY SHORT-CIRCUIT: if attempt_fn returns
+    "retry_worthy": False (a waypoint itself sits inside a mapped water
+    or snow/ice body — see route_between_waypoints), expanding the
+    search area can never fix that, since the point doesn't move. The
+    loop stops immediately instead of burning further expensive attempts
+    on something a bigger box was never going to solve.
 
     TIME-BASED CIRCUIT BREAKER: if a single attempt takes longer than
     max_attempt_seconds, the loop stops expanding rather than retrying
@@ -1286,18 +1327,20 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     worst case regardless of the precise mechanism: total time is capped
     at roughly max_padding_attempts * max_attempt_seconds, not unbounded.
 
-    Once all attempts are exhausted (either by count or by hitting the
-    time limit), a connectivity check (ignoring cost, just "is there any
-    walkable path at all") determines whether the final error message
-    reports a genuine geography limit (most likely open ocean) or a real
-    bug worth investigating.
+    Once all attempts are exhausted (by count, by hitting the time limit,
+    or by the retry-worthy short-circuit), a connectivity check (ignoring
+    cost, just "is there any walkable path at all", using the FIRST and
+    LAST waypoints as the representative start/goal) determines whether
+    the final error message reports a genuine geography limit (most
+    likely open ocean) or a real bug worth investigating — skipped
+    entirely for the retry-worthy=False case, since that failure is
+    already specific and doesn't need a connectivity diagnosis on top.
     """
     current_padding = padding_frac
-    last_result = None
     last_grid_state = None
 
     for attempt in range(1, max_padding_attempts + 1):
-        bbox = compute_dynamic_bbox(waypoint_a, waypoint_b, current_padding)
+        bbox = compute_dynamic_bbox_multi(waypoints, current_padding)
         cell_size_m = choose_cell_size_for_budget(bbox, node_budget)
 
         min_lat, min_lon, max_lat, max_lon = bbox
@@ -1315,7 +1358,7 @@ def route_any_two_points(waypoint_a: tuple[float, float],
 
         t_attempt_start = time.time()
         grid_state = build_grid_state(bbox, cell_size_m)
-        result = route_between_waypoints(grid_state, waypoint_a, waypoint_b)
+        result = attempt_fn(grid_state)
         attempt_seconds = time.time() - t_attempt_start
 
         if result["ok"]:
@@ -1327,8 +1370,13 @@ def route_any_two_points(waypoint_a: tuple[float, float],
                       f"to {current_padding:.2f}.")
             return result
 
-        last_result = result
         last_grid_state = grid_state
+
+        if not result.get("retry_worthy", True):
+            print(f"Attempt {attempt}: {result['error']}")
+            print("Not retrying with a bigger search area — the problem is a "
+                  "waypoint itself, not the size of the search area.")
+            return result
 
         if attempt_seconds > max_attempt_seconds:
             print(f"Attempt {attempt} took {attempt_seconds:.1f}s, over the "
@@ -1345,21 +1393,21 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     # All attempts exhausted (by count or by the time breaker) — diagnose
     # rather than return a bare failure.
     lats, lons = last_grid_state["lats"], last_grid_state["lons"]
-    start_rc = find_nearest_rc(lats, lons, waypoint_a[0], waypoint_a[1])
-    goal_rc = find_nearest_rc(lats, lons, waypoint_b[0], waypoint_b[1])
+    start_rc = find_nearest_rc(lats, lons, waypoints[0][0], waypoints[0][1])
+    goal_rc = find_nearest_rc(lats, lons, waypoints[-1][0], waypoints[-1][1])
     connected = _check_walkable_connectivity(last_grid_state.get("water_mask"), start_rc, goal_rc)
 
     if connected:
         error_msg = (
             f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
             f"before stopping), but a connectivity check confirms land "
-            f"DOES connect these two points within the final search area — this points to a "
+            f"DOES connect these points within the final search area — this points to a "
             f"real bug in the search or cost arrays, not a genuine geography limit."
         )
     else:
         error_msg = (
             f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
-            f"before stopping). A connectivity check confirms these two "
+            f"before stopping). A connectivity check confirms these "
             f"points are genuinely separated by water within the final search area — most "
             f"likely open ocean, or a detour larger than this many rounds of padding "
             f"expansion can reach."
@@ -1369,55 +1417,97 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     return {"ok": False, "error": error_msg}
 
 
+def route_any_two_points(waypoint_a: tuple[float, float],
+                           waypoint_b: tuple[float, float],
+                           node_budget: int = DEFAULT_NODE_BUDGET,
+                           padding_frac: float = 0.3,
+                           max_padding_attempts: int = 3,
+                           padding_growth: float = 2.0,
+                           max_attempt_seconds: float = 45.0) -> dict:
+    """
+    Performs a free search between two waypoints anywhere in New Zealand,
+    building a bounding box and grid sized to the query. See
+    _route_with_padding_retry for the retry/circuit-breaker/diagnostic
+    behavior — this is a thin wrapper around it for the 2-point case.
+    """
+    def attempt_fn(grid_state):
+        return route_between_waypoints(grid_state, waypoint_a, waypoint_b)
+
+    return _route_with_padding_retry(
+        [waypoint_a, waypoint_b], attempt_fn,
+        node_budget=node_budget, padding_frac=padding_frac,
+        max_padding_attempts=max_padding_attempts, padding_growth=padding_growth,
+        max_attempt_seconds=max_attempt_seconds,
+    )
+
+
 def route_via_waypoints(waypoints: list[tuple[float, float]],
                           node_budget: int = DEFAULT_NODE_BUDGET,
-                          padding_frac: float = 0.3) -> dict:
+                          padding_frac: float = 0.3,
+                          max_padding_attempts: int = 3,
+                          padding_growth: float = 2.0,
+                          max_attempt_seconds: float = 45.0) -> dict:
     """
     Routes through an ordered sequence of waypoints — for example, scenic
     stops placed by the user — using a single grid built to cover the
     entire chain. Each leg between consecutive waypoints is searched
-    independently for its own lowest-cost path.
+    independently for its own lowest-cost path. Now shares the same
+    retry-with-expanding-padding, circuit-breaker, and connectivity-
+    diagnosis behavior route_any_two_points already had — previously this
+    function had none of that, so a multi-waypoint route needing a
+    genuinely large detour (the same harbour/peninsula case that
+    motivated the retry logic in the first place) would fail immediately
+    with a bare "No path found" instead of getting a chance to expand the
+    search area. See _route_with_padding_retry for the full behavior.
     """
     if len(waypoints) < 2:
         raise ValueError("Need at least 2 waypoints")
 
-    bbox = compute_dynamic_bbox_multi(waypoints, padding_frac)
-    cell_size_m = choose_cell_size_for_budget(bbox, node_budget)
-    print(f"Multi-waypoint bbox for {len(waypoints)} waypoints, cell size: {cell_size_m:.1f}m")
+    def attempt_fn(grid_state):
+        total_distance_km = 0.0
+        total_hours = 0.0
+        total_climb_m = 0.0
+        full_coords = []
+        full_elevations = []
+        for leg_num, (a, b) in enumerate(zip(waypoints[:-1], waypoints[1:]), start=1):
+            leg = route_between_waypoints(grid_state, a, b)
+            if not leg["ok"]:
+                return {
+                    "ok": False,
+                    "error": f"Leg {leg_num} ({a} -> {b}) failed: {leg['error']}",
+                    # Propagated so a water-blocked waypoint anywhere in the
+                    # chain short-circuits the retry loop correctly, same as
+                    # the 2-point case.
+                    "retry_worthy": leg.get("retry_worthy", True),
+                }
+            total_distance_km += leg["distance_km"]
+            total_hours += leg["estimated_hours"]
+            total_climb_m += leg["climb_m"]
+            full_coords.extend(leg["route"]["geometry"]["coordinates"])
+            full_elevations.extend(leg["elevations_m"])
+            print(f"  Leg {leg_num}: {leg['distance_km']:.2f}km, "
+                  f"{leg['estimated_hours']:.2f}h, {leg['climb_m']:.1f}m climb")
 
-    grid_state = build_grid_state(bbox, cell_size_m)
+        return {
+            "ok": True,
+            "distance_km": total_distance_km,
+            "estimated_hours": total_hours,
+            "climb_m": total_climb_m,
+            "n_points": len(full_coords),
+            "route": {
+                "type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": full_coords},
+            },
+            "elevations_m": full_elevations,
+        }
 
-    total_distance_km = 0.0
-    total_hours = 0.0
-    total_climb_m = 0.0
-    full_coords = []
-    full_elevations = []
-    for leg_num, (a, b) in enumerate(zip(waypoints[:-1], waypoints[1:]), start=1):
-        leg = route_between_waypoints(grid_state, a, b)
-        if not leg["ok"]:
-            return {"ok": False, "error": f"Leg {leg_num} ({a} -> {b}) failed: {leg['error']}"}
-        total_distance_km += leg["distance_km"]
-        total_hours += leg["estimated_hours"]
-        total_climb_m += leg["climb_m"]
-        full_coords.extend(leg["route"]["geometry"]["coordinates"])
-        full_elevations.extend(leg["elevations_m"])
-        print(f"  Leg {leg_num}: {leg['distance_km']:.2f}km, "
-              f"{leg['estimated_hours']:.2f}h, {leg['climb_m']:.1f}m climb")
-
-    return {
-        "ok": True,
-        "distance_km": total_distance_km,
-        "estimated_hours": total_hours,
-        "climb_m": total_climb_m,
-        "n_points": len(full_coords),
-        "route": {
-            "type": "Feature",
-            "geometry": {"type": "LineString", "coordinates": full_coords},
-        },
-        "elevations_m": full_elevations,
-        "bbox_used": bbox,
-        "cell_size_m_used": cell_size_m,
-    }
+    print(f"Multi-waypoint routing for {len(waypoints)} waypoints")
+    return _route_with_padding_retry(
+        waypoints, attempt_fn,
+        node_budget=node_budget, padding_frac=padding_frac,
+        max_padding_attempts=max_padding_attempts, padding_growth=padding_growth,
+        max_attempt_seconds=max_attempt_seconds,
+    )
 
 
 def route_with_waypoints(waypoint_a: tuple[float, float],
