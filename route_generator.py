@@ -1482,12 +1482,22 @@ def find_nearest_rc(lats: np.ndarray, lons: np.ndarray,
 
 def route_between_waypoints(grid_state: dict,
                               waypoint_a: tuple[float, float],
-                              waypoint_b: tuple[float, float]) -> dict:
+                              waypoint_b: tuple[float, float],
+                              label_a: str = "Start point",
+                              label_b: str = "End point") -> dict:
     """
     Routes between two waypoints using an already-built grid state. This
     is the inexpensive per-request path: grid_state is built once and
     reused across many calls, and only the waypoint-snapping and A* search
     happen here.
+
+    label_a/label_b name waypoint_a/waypoint_b in the water-blocked error
+    message below. Default to "Start point"/"End point" for the plain
+    2-point case; route_via_waypoints passes more specific labels (e.g.
+    "Waypoint 2") for each leg of a multi-waypoint chain, so a blocked
+    waypoint in the middle of the sequence doesn't get reported as a
+    generic "Start point"/"End point" of whichever leg happened to touch
+    it — see route_via_waypoints for how those labels are chosen.
     """
     lats, lons = grid_state["lats"], grid_state["lons"]
     cost_arrays = grid_state["cost_arrays"]
@@ -1508,13 +1518,13 @@ def route_between_waypoints(grid_state: dict,
         if water_mask[start_rc]:
             return {
                 "ok": False,
-                "error": "Start point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "error": f"{label_a} falls within a mapped water or snow/ice body — pick a point on dry land.",
                 "retry_worthy": False,
             }
         if water_mask[goal_rc]:
             return {
                 "ok": False,
-                "error": "End point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "error": f"{label_b} falls within a mapped water or snow/ice body — pick a point on dry land.",
                 "retry_worthy": False,
             }
 
@@ -1825,6 +1835,27 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     )
 
 
+def _waypoint_label(index: int, n_waypoints: int) -> str:
+    """
+    Names a waypoint by its position in a full multi-waypoint sequence,
+    for use in route_via_waypoints' error messages. index 0 is always
+    "Start point" and the last index is always "End point"; everything
+    between is "Waypoint N" (matching the site's own terminology for the
+    points placed between start and end, not "via point"), numbered to
+    match how route_with_waypoints builds the full sequence
+    (all_waypoints = [waypoint_a] + list(via) + [waypoint_b]) — so index
+    1 is via[0] ("Waypoint 1"), index 2 is via[1] ("Waypoint 2"), and so
+    on, matching the "via" list a caller actually sent (the "via" name
+    here is this API's own internal field name, unrelated to the
+    site's user-facing "waypoint" terminology).
+    """
+    if index == 0:
+        return "Start point"
+    if index == n_waypoints - 1:
+        return "End point"
+    return f"Waypoint {index}"
+
+
 def route_via_waypoints(waypoints: list[tuple[float, float]],
                           node_budget: int = DEFAULT_NODE_BUDGET,
                           padding_frac: float = 0.3,
@@ -1847,6 +1878,8 @@ def route_via_waypoints(waypoints: list[tuple[float, float]],
     if len(waypoints) < 2:
         raise ValueError("Need at least 2 waypoints")
 
+    n_waypoints = len(waypoints)
+
     def attempt_fn(grid_state):
         total_distance_km = 0.0
         total_hours = 0.0
@@ -1854,7 +1887,9 @@ def route_via_waypoints(waypoints: list[tuple[float, float]],
         full_coords = []
         full_elevations = []
         for leg_num, (a, b) in enumerate(zip(waypoints[:-1], waypoints[1:]), start=1):
-            leg = route_between_waypoints(grid_state, a, b)
+            label_a = _waypoint_label(leg_num - 1, n_waypoints)
+            label_b = _waypoint_label(leg_num, n_waypoints)
+            leg = route_between_waypoints(grid_state, a, b, label_a=label_a, label_b=label_b)
             if not leg["ok"]:
                 return {
                     "ok": False,
