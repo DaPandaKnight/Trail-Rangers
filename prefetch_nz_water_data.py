@@ -86,11 +86,35 @@ OUTPUT_FILE = Path("nz_water_data.pkl")
 # all their country extracts, not specific to NZ.
 WATER_LAYER = "gis_osm_water_a_free_1"        # water body polygons (lakes, reservoirs, etc.)
 WATERWAYS_LAYER = "gis_osm_waterways_free_1"  # waterway lines
+ROADS_LAYER = "gis_osm_roads_free_1"          # roads AND paths/tracks/footways together
 
 # Matches the scope of the original Overpass-based query: rivers, streams,
 # and canals, but not drains/ditches (which the waterways layer also
 # contains, tagged with these same fclass values).
 STREAM_FCLASSES = {"river", "stream", "canal"}
+
+# Scope for bridge detection (fix #3) — revised after real diagnostic
+# data (diagnose_bridges.py) showed the original WALKABLE_FCLASSES
+# allowlist was too narrow: a real, currently-used pedestrian/tramping
+# bridge (NZ's Alexandra Bridge, SH8, and a nearby cycleway bridge) is
+# tagged fclass='primary'/'cycleway' with bridge='T' — excluded by an
+# allowlist limited to footway/path/track/etc.
+#
+# Switched to a BLOCKLIST instead: include every bridge='T' segment
+# EXCEPT the genuine controlled-access classes, where pedestrian access
+# is typically illegal, not just unsafe (NZ's actual motorways — a very
+# small fraction of the network, not ordinary state highways like SH8).
+# This matches how NZ tramping routes commonly work in practice — a
+# short road-walk across an ordinary highway bridge to link up two
+# tracks is completely normal, not something the app should refuse to
+# route across.
+#
+# Real trade-off, not free of downsides: this can include a short walk
+# across a 'primary'-classified bridge carrying light vehicle traffic —
+# preferred over the app confidently reporting "no path exists" for a
+# route that a real tramper would just walk.
+EXCLUDED_BRIDGE_FCLASSES = {"motorway", "motorway_link", "trunk", "trunk_link"}
+BRIDGE_BUFFER_M = 8.0  # rough footbridge/track-bridge width margin
 
 SHAPEFILE_EXTENSIONS = [".shp", ".shx", ".dbf", ".prj", ".cpg"]
 
@@ -128,10 +152,10 @@ def download_geofabrik_extract():
 
 
 def extract_water_layers():
-    print(f"Extracting water/waterway layers from {DOWNLOAD_FILE}...")
+    print(f"Extracting water/waterway/roads layers from {DOWNLOAD_FILE}...")
     EXTRACT_DIR.mkdir(exist_ok=True)
 
-    wanted_prefixes = (WATER_LAYER, WATERWAYS_LAYER)
+    wanted_prefixes = (WATER_LAYER, WATERWAYS_LAYER, ROADS_LAYER)
     with zipfile.ZipFile(DOWNLOAD_FILE) as zf:
         members = [
             name for name in zf.namelist()
@@ -143,7 +167,7 @@ def extract_water_layers():
                 f"No files matching {wanted_prefixes} found in the archive. "
                 f"Geofabrik may have changed their layer naming — inspect "
                 f"the zip's contents with `unzip -l {DOWNLOAD_FILE}` and "
-                f"update WATER_LAYER/WATERWAYS_LAYER above."
+                f"update WATER_LAYER/WATERWAYS_LAYER/ROADS_LAYER above."
             )
         zf.extractall(EXTRACT_DIR, members=members)
         print(f"Extracted {len(members)} files: {members}")
@@ -182,6 +206,52 @@ def parse_stream_lines() -> list:
     for shp_rec in reader.iterShapeRecords():
         fclass = shp_rec.record["fclass"]
         if fclass not in STREAM_FCLASSES:
+            continue
+        if not shp_rec.shape.points:
+            continue
+        line = LineString(shp_rec.shape.points)
+        if line.is_valid and line.length > 0:
+            lines.append(line)
+    reader.close()
+    return lines
+
+
+def parse_bridge_lines() -> list:
+    """
+    Reads the roads layer, keeping every segment tagged as a bridge
+    (bridge == "T", confirmed against Geofabrik's own schema
+    documentation — VARCHAR(1), "T" for true), EXCEPT genuine
+    controlled-access classes (EXCLUDED_BRIDGE_FCLASSES) where
+    pedestrian access is typically illegal, not just unsafe. This is
+    fix #3: a real, mapped bridge is the one legitimate way to cross
+    otherwise-blocked water — see project notes for why this
+    deliberately does NOT try to infer ford safety from geometry
+    (river-crossing danger depends on live conditions — current speed,
+    depth, recent rain — that no static map data can tell us; a real
+    bridge is a fact, not a guess).
+
+    REVISED FROM AN EARLIER ALLOWLIST: originally scoped to only
+    footway/path/track/etc. (WALKABLE_FCLASSES), on the assumption that
+    excluding general road classes would avoid routing pedestrians
+    across dangerous highway bridges. Real diagnostic data
+    (diagnose_bridges.py) showed this was too narrow — NZ's actual
+    Alexandra Bridge (SH8) and a nearby cycleway bridge are both tagged
+    fclass='primary'/'cycleway' with bridge='T', and both were being
+    silently excluded. A short road-walk across an ordinary highway
+    bridge to link up two tracks is completely normal in NZ tramping,
+    not something worth refusing to route across.
+    """
+    path = EXTRACT_DIR / ROADS_LAYER
+    reader = shapefile.Reader(str(path))
+    lines = []
+    for shp_rec in reader.iterShapeRecords():
+        # bridge field may be absent/None on some records — treat
+        # anything other than exactly "T" as not-a-bridge, defensively.
+        bridge = shp_rec.record["bridge"] if "bridge" in shp_rec.record.as_dict() else None
+        if bridge != "T":
+            continue
+        fclass = shp_rec.record["fclass"]
+        if fclass in EXCLUDED_BRIDGE_FCLASSES:
             continue
         if not shp_rec.shape.points:
             continue
@@ -311,6 +381,11 @@ def main():
     stream_lines = parse_stream_lines()
     print(f"  {len(stream_lines)} stream lines.")
 
+    print("Parsing bridge crossings (fix #3 — footway/path/track/steps/"
+          "bridleway/pedestrian segments tagged bridge=T)...")
+    bridge_lines = parse_bridge_lines()
+    print(f"  {len(bridge_lines)} bridge lines.")
+
     print("\nFetching ocean/sea coverage...")
     download_ocean_polygons()
     ocean_shapefile_path = extract_ocean_layer()
@@ -323,15 +398,16 @@ def main():
     water_polygons.extend(ocean_polygons)
     print(f"\nTotal water_polygons after merging ocean coverage: {len(water_polygons)}")
 
-    # ── Precompute both global unions HERE, offline, not at Lambda
-    # cold-start. This was moved here after a real production run showed
-    # the stream buffer union alone taking 677 SECONDS (over 11 minutes)
-    # at cold-start — almost certainly enough to exceed a typical Lambda
-    # timeout and fail the function outright, not just run slowly. An
-    # 11-minute wait is completely fine here, in an offline batch script
-    # you run once; it is not fine blocking a live user's first request.
-    # route_generator.py now just loads these precomputed results directly
-    # from the pickle instead of computing them itself.
+    # ── Precompute ALL global unions HERE, offline, not at Lambda
+    # cold-start OR per-request. This was moved here after a real
+    # production run showed the stream buffer union alone taking 677
+    # SECONDS (over 11 minutes) at cold-start — almost certainly enough
+    # to exceed a typical Lambda timeout and fail the function outright,
+    # not just run slowly. An 11-minute wait is completely fine here, in
+    # an offline batch script you run once; it is not fine blocking a
+    # live user's first request. route_generator.py now just loads these
+    # precomputed results directly from the pickle instead of computing
+    # them itself.
     print("\nPrecomputing global water union (this is the expensive part — "
           "may take a while, that's expected and fine here)...")
     t0 = time.time()
@@ -350,14 +426,28 @@ def main():
         global_stream_buffer_union = merged_streams.buffer(buffer_deg)
     print(f"  Done in {time.time() - t0:.1f}s.")
 
+    print("Precomputing global bridge buffer union (bridges are far fewer than "
+          "streams nationally, so this should be quick even at national scale, "
+          "but precomputing offline regardless — same principle, no exceptions "
+          "this time)...")
+    t0 = time.time()
+    global_bridge_buffer_union = None
+    if bridge_lines:
+        merged_bridges = unary_union(bridge_lines)
+        m_per_deg_lat, m_per_deg_lon = meters_per_degree(NZ_REPRESENTATIVE_LAT)
+        bridge_buffer_deg = BRIDGE_BUFFER_M / min(m_per_deg_lat, m_per_deg_lon)
+        global_bridge_buffer_union = merged_bridges.buffer(bridge_buffer_deg)
+    print(f"  Done in {time.time() - t0:.1f}s.")
+
     with open(OUTPUT_FILE, "wb") as f:
         pickle.dump(
-            (water_polygons, stream_lines, global_water_union, global_stream_buffer_union),
+            (water_polygons, stream_lines, global_water_union, global_stream_buffer_union,
+             bridge_lines, global_bridge_buffer_union),
             f,
         )
-    print(f"Saved to {OUTPUT_FILE} (now includes precomputed unions) — "
-          f"route_generator.py will load these directly instead of computing "
-          f"them at cold-start.")
+    print(f"Saved to {OUTPUT_FILE} (now includes precomputed unions AND bridge "
+          f"crossings) — route_generator.py will load these directly instead of "
+          f"computing them at cold-start.")
 
 
 if __name__ == "__main__":
