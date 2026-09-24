@@ -752,23 +752,27 @@ def rasterize_precomputed_geometry(merged_geometry, lats: np.ndarray, lons: np.n
 def _compute_candidate_crossing_region(merged_geometry, lats: np.ndarray, lons: np.ndarray,
                                           buffer_cells: float = 2.0) -> np.ndarray:
     """
-    Cheap pre-filter for _compute_step_crossing_blocked: buffers the
-    ACTUAL underlying geometry — not the already-rasterized water_mask —
-    by roughly buffer_cells grid cells, then rasterizes the buffered
-    result. Any cell where this comes back False cannot possibly have a
-    crossing-check hit for ANY direction, since even a razor-thin sliver
-    of real geometry, once buffered by more than a cell's width, becomes
-    wide enough to register in a coarse cell-center rasterization.
+    Cheap pre-filter for _compute_step_crossing_blocked. REWRITTEN to use
+    the geometry's bounding box (padded by buffer_cells grid cells)
+    instead of a true .buffer() of its actual shape — .bounds is a
+    near-free property regardless of vertex count, whereas .buffer()
+    scales with it. Real data exposed this: a cluster of real glacier
+    polygons near Aoraki/Mt Cook (798 vertices on the worst single
+    feature, ~3,242 total in one small query) made this step the
+    dominant cost on an otherwise TINY 56,444-node grid — the same
+    underlying lesson as the original 677s stream-buffer bug, just at a
+    different call site this time (a small per-request buffer, not a
+    national one, but still scaling with real-world vertex density).
 
-    THIS IS SOUND WHERE AN EARLIER ATTEMPT WASN'T: that attempt dilated
-    the already-rasterized water_mask as its "near water" test, which is
-    exactly backwards — the whole point of the crossing check is to catch
-    water narrow enough that water_mask can be entirely empty (no cell
-    center falls inside it), so dilating an all-False mask just gives
-    back all-False, silently defeating the fix in precisely the case it
-    exists for. Buffering the SOURCE geometry first avoids that: a
-    razor-thin polygon has no interior cell centers, but after a
-    generous buffer it certainly does.
+    A bounding box is a superset of the true buffered shape, so this can
+    only ever mark MORE cells as candidates than strictly necessary,
+    never fewer — nothing is missed, some cells are checked that a
+    tighter buffer would have skipped. Given the ACTUAL correctness
+    check downstream still uses the real geometry precisely, this
+    doesn't trade away any accuracy, only wastes a little candidate-
+    checking effort in the corners of a bounding box for a non-
+    rectangular feature — a good trade for making this immune to vertex
+    density entirely, which mattered more here.
     """
     n_rows, n_cols = len(lats), len(lons)
     if merged_geometry is None:
@@ -776,11 +780,17 @@ def _compute_candidate_crossing_region(merged_geometry, lats: np.ndarray, lons: 
 
     lat_step = abs(lats[1] - lats[0]) if n_rows > 1 else 0.0
     lon_step = abs(lons[1] - lons[0]) if n_cols > 1 else 0.0
-    buffer_deg = buffer_cells * max(lat_step, lon_step)
+    pad_lat = buffer_cells * lat_step
+    pad_lon = buffer_cells * lon_step
 
-    buffered = merged_geometry.buffer(buffer_deg)
+    min_x, min_y, max_x, max_y = merged_geometry.bounds
+    min_x -= pad_lon
+    max_x += pad_lon
+    min_y -= pad_lat
+    max_y += pad_lat
+
     lon_grid, lat_grid = np.meshgrid(lons, lats)
-    return shapely.contains_xy(buffered, lon_grid, lat_grid)
+    return (lon_grid >= min_x) & (lon_grid <= max_x) & (lat_grid >= min_y) & (lat_grid <= max_y)
 
 
 def _compute_step_crossing_blocked(merged_geometry, lats: np.ndarray, lons: np.ndarray,
@@ -1982,18 +1992,11 @@ def _route_with_padding_retry(waypoints: list[tuple[float, float]],
 
     if connected:
         error_msg = (
-            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
-            f"before stopping), but a connectivity check confirms land "
-            f"DOES connect these points within the final search area — this points to a "
-            f"real bug in the search or cost arrays, not a genuine geography limit."
+            f"No path found - but paths are connected"
         )
     else:
         error_msg = (
-            f"No path found (padding expanded up to {current_padding / padding_growth:.2f} "
-            f"before stopping). A connectivity check confirms these "
-            f"points are genuinely separated by water within the final search area — most "
-            f"likely open ocean, or a detour larger than this many rounds of padding "
-            f"expansion can reach."
+            f"No path found - most likely due to open ocean, or a detour larger than we can reach"
         )
 
     print(error_msg)
@@ -2318,11 +2321,25 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
 # increased beyond the default, since NumPy performs poorly under
 # Lambda's default 128MB allocation.
 
-CORS_HEADERS = {
-    "Access-Control-Allow-Origin": os.environ.get("ALLOWED_ORIGIN", "*"),
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+ALLOWED_ORIGINS = {
+    o.strip() for o in os.environ.get(
+        "ALLOWED_ORIGINS", "https://ridgewalker.co.nz,https://www.ridgewalker.co.nz"
+    ).split(",") if o.strip()
 }
+
+
+def _request_origin(event: dict) -> str | None:
+    return (event.get("headers") or {}).get("origin")
+
+
+def cors_headers_for(origin: str | None) -> dict:
+    allow_origin = origin if origin in ALLOWED_ORIGINS else next(iter(ALLOWED_ORIGINS), "*")
+    return {
+        "Access-Control-Allow-Origin": allow_origin,
+        "Access-Control-Allow-Methods": "POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Vary": "Origin",
+    }
 
 
 def _warm_up():
@@ -2371,9 +2388,10 @@ def lambda_handler(event, context):
         or event.get("httpMethod")
         or "GET"
     )
+    cors_headers = cors_headers_for(_request_origin(event))
 
     if method == "OPTIONS":
-        return {"statusCode": 204, "headers": CORS_HEADERS, "body": ""}
+        return {"statusCode": 204, "headers": cors_headers, "body": ""}
 
     try:
         raw_body = event.get("body") or "{}"
@@ -2383,7 +2401,7 @@ def lambda_handler(event, context):
     except (TypeError, ValueError, json.JSONDecodeError) as e:
         return {
             "statusCode": 400,
-            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "headers": {**cors_headers, "Content-Type": "application/json"},
             "body": json.dumps({"ok": False, "error": redact_api_keys(f"Bad request: {e}")}),
         }
 
@@ -2400,7 +2418,7 @@ def lambda_handler(event, context):
             # have without this feature at all.
             print(f"WARNING: warm-up failed ({e}) — the next real request "
                   f"will pay the cold-start cost itself instead.")
-        return {"statusCode": 200, "headers": CORS_HEADERS, "body": json.dumps({"ok": True, "warm": True})}
+        return {"statusCode": 200, "headers": cors_headers, "body": json.dumps({"ok": True, "warm": True})}
 
     try:
         waypoint_a = tuple(payload["a"])
@@ -2410,7 +2428,7 @@ def lambda_handler(event, context):
     except (KeyError, TypeError, ValueError) as e:
         return {
             "statusCode": 400,
-            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "headers": {**cors_headers, "Content-Type": "application/json"},
             "body": json.dumps({"ok": False, "error": redact_api_keys(f"Bad request: {e}")}),
         }
 
@@ -2430,13 +2448,13 @@ def lambda_handler(event, context):
     except Exception as e:
         return {
             "statusCode": 500,
-            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "headers": {**cors_headers, "Content-Type": "application/json"},
             "body": json.dumps({"ok": False, "error": redact_api_keys(f"Routing failed: {e}")}),
         }
 
     return {
         "statusCode": 200 if result.get("ok") else 400,
-        "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+        "headers": {**cors_headers, "Content-Type": "application/json"},
         "body": json.dumps(result),
     }
 
