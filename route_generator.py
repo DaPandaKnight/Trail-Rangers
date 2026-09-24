@@ -476,17 +476,23 @@ def _resolve_water_data_path():
 def _load_local_water_index():
     """
     Loads the local water dataset (see _resolve_water_data_path for where
-    from) into memory and builds an STRtree spatial index (used for the
+    from) into memory and builds STRtree spatial indexes (used for the
     per-bbox feature COUNT shown in logging, and for the Overpass-fallback
     code path).
 
-    The global water union and stream buffer union are now precomputed
+    The global water union and stream buffer union are precomputed
     OFFLINE by prefetch_nz_water_data.py and loaded directly here, rather
     than computed at cold-start — see that script's main() for why: a
     real production run showed the stream buffer union alone taking 677
     seconds (over 11 minutes) at cold-start, almost certainly enough to
     exceed a typical Lambda timeout and fail the function outright. That
     work has to happen offline, not on a live request's critical path.
+
+    Bridge crossings (fix #3) are handled the same way — see
+    prefetch_nz_water_data.py's parse_bridge_lines(). Pickles built
+    before this feature existed (4-tuple or 2-tuple) simply have no
+    bridge data; routing falls back to treating all water as fully
+    blocked, exactly as before this feature was added.
 
     Cached at module level — this whole function runs at most once per
     process (once per Lambda cold start), not once per request.
@@ -508,8 +514,17 @@ def _load_local_water_index():
     with open(data_path, "rb") as f:
         loaded = pickle.load(f)
 
-    if len(loaded) == 4:
+    bridge_lines = []
+    global_bridge_buffer_union = None
+
+    if len(loaded) == 6:
+        (water_polygons, stream_lines, global_water_union, global_stream_buffer_union,
+         bridge_lines, global_bridge_buffer_union) = loaded
+    elif len(loaded) == 4:
         water_polygons, stream_lines, global_water_union, global_stream_buffer_union = loaded
+        print("NOTE: this nz_water_data.pkl predates bridge crossings (fix #3) — "
+              "routing without bridge awareness. Re-run prefetch_nz_water_data.py "
+              "to enable crossing real mapped bridges over otherwise-blocked water.")
     else:
         # Old-format pickle (from before unions were precomputed offline) —
         # fall back to computing them here, with a clear warning that this
@@ -518,10 +533,10 @@ def _load_local_water_index():
         # version instead of hitting this every cold start.
         water_polygons, stream_lines = loaded
         print("WARNING: this nz_water_data.pkl is in the OLD format (no precomputed "
-              "unions) — computing them now, which may take a long time (a real run "
-              "measured 677s for the stream buffer alone). Re-run "
-              "prefetch_nz_water_data.py to save the precomputed version and skip "
-              "this every cold start.")
+              "unions, no bridge data) — computing unions now, which may take a long "
+              "time (a real run measured 677s for the stream buffer alone). Re-run "
+              "prefetch_nz_water_data.py to save the precomputed version and enable "
+              "bridge crossings.")
 
         t_union_start = time.time()
         global_water_union = unary_union(water_polygons) if water_polygons else None
@@ -539,15 +554,19 @@ def _load_local_water_index():
 
     water_tree = STRtree(water_polygons) if water_polygons else None
     stream_tree = STRtree(stream_lines) if stream_lines else None
+    bridge_tree = STRtree(bridge_lines) if bridge_lines else None
 
     print(f"Loaded local water dataset: {len(water_polygons)} water polygons, "
-          f"{len(stream_lines)} stream lines. No Overpass calls needed for routing now.")
+          f"{len(stream_lines)} stream lines, {len(bridge_lines)} bridge crossings. "
+          f"No Overpass calls needed for routing now.")
 
     _local_water_index = {
         "water_tree": water_tree, "water_polygons": water_polygons,
         "stream_tree": stream_tree, "stream_lines": stream_lines,
+        "bridge_tree": bridge_tree, "bridge_lines": bridge_lines,
         "global_water_union": global_water_union,
         "global_stream_buffer_union": global_stream_buffer_union,
+        "global_bridge_buffer_union": global_bridge_buffer_union,
     }
     return _local_water_index
 
@@ -581,6 +600,31 @@ def query_local_water_data(bbox: tuple[float, float, float, float]):
                 stream_result.append(geom)
 
     return water_result, stream_result
+
+
+def query_local_bridge_data(bbox: tuple[float, float, float, float]) -> list[LineString]:
+    """
+    Returns bridge crossing lines (fix #3) intersecting bbox, or an empty
+    list if no local dataset is available or it predates bridge support
+    — unlike water/stream, there's no live-Overpass fallback for bridges;
+    this is a purely additive feature, so "no bridge data" just means
+    routing falls back to treating all water as fully blocked, same as
+    before this feature existed. Pure in-memory spatial query, no
+    network call.
+    """
+    index = _load_local_water_index()
+    if index is None or index.get("bridge_tree") is None:
+        return []
+
+    min_lat, min_lon, max_lat, max_lon = bbox
+    query_box = box(min_lon, min_lat, max_lon, max_lat)
+
+    result = []
+    for idx in index["bridge_tree"].query(query_box):
+        geom = index["bridge_lines"][idx]
+        if geom.intersects(query_box):
+            result.append(geom)
+    return result
 
 
 def get_water_and_stream_geometries(bbox: tuple[float, float, float, float]
@@ -663,15 +707,19 @@ def fetch_water_and_stream_geometries(bbox: tuple[float, float, float, float],
 
 
 def build_water_mask(water_polygons: list[Polygon], lats: np.ndarray,
-                       lons: np.ndarray) -> np.ndarray:
-    """Rasterizes water polygons onto the grid. Returns a boolean array where True marks a cell inside a water body."""
+                       lons: np.ndarray):
+    """
+    Rasterizes water polygons onto the grid. Returns (merged_geometry,
+    water_mask) — the merged geometry is needed by apply_water_mask's
+    midpoint check (see its docstring), not just the rasterized mask.
+    """
     n_rows, n_cols = len(lats), len(lons)
     if not water_polygons:
-        return np.zeros((n_rows, n_cols), dtype=bool)
+        return None, np.zeros((n_rows, n_cols), dtype=bool)
 
     merged = unary_union(water_polygons)
     lon_grid, lat_grid = np.meshgrid(lons, lats)
-    return shapely.contains_xy(merged, lon_grid, lat_grid)
+    return merged, shapely.contains_xy(merged, lon_grid, lat_grid)
 
 
 def rasterize_precomputed_geometry(merged_geometry, lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
@@ -691,23 +739,180 @@ def rasterize_precomputed_geometry(merged_geometry, lats: np.ndarray, lons: np.n
     return shapely.contains_xy(merged_geometry, lon_grid, lat_grid)
 
 
-def apply_water_mask(cost_arrays: dict, water_mask: np.ndarray) -> dict:
-    """Sets the cost of any edge that touches a water cell to infinity, hard-blocking it from the route."""
+def _compute_candidate_crossing_region(merged_geometry, lats: np.ndarray, lons: np.ndarray,
+                                          buffer_cells: float = 2.0) -> np.ndarray:
+    """
+    Cheap pre-filter for _compute_step_crossing_blocked: buffers the
+    ACTUAL underlying geometry — not the already-rasterized water_mask —
+    by roughly buffer_cells grid cells, then rasterizes the buffered
+    result. Any cell where this comes back False cannot possibly have a
+    crossing-check hit for ANY direction, since even a razor-thin sliver
+    of real geometry, once buffered by more than a cell's width, becomes
+    wide enough to register in a coarse cell-center rasterization.
+
+    THIS IS SOUND WHERE AN EARLIER ATTEMPT WASN'T: that attempt dilated
+    the already-rasterized water_mask as its "near water" test, which is
+    exactly backwards — the whole point of the crossing check is to catch
+    water narrow enough that water_mask can be entirely empty (no cell
+    center falls inside it), so dilating an all-False mask just gives
+    back all-False, silently defeating the fix in precisely the case it
+    exists for. Buffering the SOURCE geometry first avoids that: a
+    razor-thin polygon has no interior cell centers, but after a
+    generous buffer it certainly does.
+    """
+    n_rows, n_cols = len(lats), len(lons)
+    if merged_geometry is None:
+        return np.zeros((n_rows, n_cols), dtype=bool)
+
+    lat_step = abs(lats[1] - lats[0]) if n_rows > 1 else 0.0
+    lon_step = abs(lons[1] - lons[0]) if n_cols > 1 else 0.0
+    buffer_deg = buffer_cells * max(lat_step, lon_step)
+
+    buffered = merged_geometry.buffer(buffer_deg)
+    lon_grid, lat_grid = np.meshgrid(lons, lats)
+    return shapely.contains_xy(buffered, lon_grid, lat_grid)
+
+
+def _compute_step_crossing_blocked(merged_geometry, lats: np.ndarray, lons: np.ndarray,
+                                     di: int, dj: int, n_samples: int = 3,
+                                     candidate_region: np.ndarray = None) -> np.ndarray:
+    """
+    For direction (di, dj), checks several points ALONG the step from
+    each cell (i,j) to its neighbor (i+di, j+dj) against merged_geometry
+    — catching a real bug the endpoint-only check misses: a knight's-move
+    step can span up to ~22m at 10m resolution, so a water gap NARROWER
+    than the step can sit entirely between two dry cell centers, letting
+    a route silently "jump" over real water. Grid rows/cols map to
+    lat/lon via simple linear interpolation, since lats/lons are evenly
+    spaced (see build_elevation_grid) — exact, not an approximation.
+
+    SAMPLES MULTIPLE POINTS, NOT JUST THE MIDPOINT: an earlier version
+    checked only the single midpoint and looked correct on a simple
+    1-cell step, but testing caught a real gap — for the longer
+    knight's-move directions (spanning 2 cells), a narrow obstacle
+    doesn't have to sit at the exact arithmetic center of the step, and
+    a single sample missed one sitting between the two cells but off the
+    step's exact midpoint. n_samples=3 (at 1/4, 1/2, 3/4 along the step)
+    substantially closes that gap; it is not an absolute mathematical
+    guarantee against an adversarially-thin sliver landing exactly
+    between two sample points, but that residual risk is far smaller
+    than the confirmed gap this replaces. A fully rigorous fix would be a
+    true line-segment-vs-polygon intersection test per edge, not sampling
+    at all — noted here as a possible future refinement if this residual
+    risk ever turns out to matter in practice.
+
+    candidate_region (see _compute_candidate_crossing_region) restricts
+    the expensive per-sample geometry query to cells that could actually
+    matter — measured to cut this from ~10s to a small fraction of that
+    on a 2-million-node grid with real-density water polygons, without
+    losing any correctness (unlike an earlier, unsound attempt that
+    restricted based on the lossy rasterized mask instead of the source
+    geometry — see that function's docstring).
+    """
+    n_rows, n_cols = len(lats), len(lons)
+    if merged_geometry is None:
+        return np.zeros((n_rows, n_cols), dtype=bool)
+
+    if candidate_region is not None and not candidate_region.any():
+        return np.zeros((n_rows, n_cols), dtype=bool)
+
+    lat_step = lats[1] - lats[0] if n_rows > 1 else 0.0
+    lon_step = lons[1] - lons[0] if n_cols > 1 else 0.0
+
+    row_idx = np.arange(n_rows)
+    col_idx = np.arange(n_cols)
+
+    blocked = np.zeros((n_rows, n_cols), dtype=bool)
+    for k in range(1, n_samples + 1):
+        t = k / (n_samples + 1)  # e.g. n_samples=3 -> t in {0.25, 0.5, 0.75}
+        sample_row = row_idx + di * t
+        sample_col = col_idx + dj * t
+
+        sample_lat_1d = lats[0] + sample_row * lat_step
+        sample_lon_1d = lons[0] + sample_col * lon_step
+        sample_lat_grid = np.broadcast_to(sample_lat_1d[:, None], (n_rows, n_cols))
+        sample_lon_grid = np.broadcast_to(sample_lon_1d[None, :], (n_rows, n_cols))
+
+        if candidate_region is None:
+            blocked |= shapely.contains_xy(merged_geometry, sample_lon_grid, sample_lat_grid)
+        else:
+            hits = np.zeros((n_rows, n_cols), dtype=bool)
+            hits[candidate_region] = shapely.contains_xy(
+                merged_geometry, sample_lon_grid[candidate_region], sample_lat_grid[candidate_region]
+            )
+            blocked |= hits
+
+    return blocked
+
+
+def apply_water_mask(cost_arrays: dict, water_mask: np.ndarray,
+                       lats: np.ndarray = None, lons: np.ndarray = None,
+                       merged_water_geometry=None, local_water_geometry=None) -> dict:
+    """
+    Sets the cost of any edge that touches a water cell to infinity,
+    hard-blocking it from the route.
+
+    Checking only the two endpoint cells (as before) misses a real bug:
+    a knight's-move step can be up to ~22m at 10m resolution, so a water
+    gap NARROWER than the step can sit entirely between two dry cell
+    centers, letting the path silently jump over real water a hiker
+    could never actually cross there. When lats/lons and
+    merged_water_geometry are provided, this also checks several points
+    ALONG each candidate step against the actual (un-rasterized) water
+    geometry, catching gaps the endpoint-only check would miss — see
+    _compute_step_crossing_blocked's docstring for why multiple sample
+    points, not just one.
+
+    merged_water_geometry vs. local_water_geometry — these are
+    DELIBERATELY separate, not redundant:
+    - merged_water_geometry is used for the actual contains_xy crossing
+      checks. It's fine for this to be the enormous precomputed NATIONAL
+      union (all 61,855 water polygons) — contains_xy scales with query
+      point count, not geometry complexity.
+    - local_water_geometry is what the candidate-region pre-filter
+      buffers (see _compute_candidate_crossing_region). This MUST be a
+      small, per-bbox-local geometry, not the national union — .buffer()
+      genuinely scales with geometry complexity, and buffering the whole
+      country's water data on every single request caused a real
+      multi-minute hang in production. If omitted, falls back to
+      merged_water_geometry (correct but potentially catastrophically
+      slow if that happens to be a large precomputed union — always pass
+      a local one when the caller has access to a bbox-scoped subset).
+    """
     water_float = water_mask.astype(np.float64)
+    check_crossings = (merged_water_geometry is not None and lats is not None and lons is not None)
+    buffer_source = local_water_geometry if local_water_geometry is not None else merged_water_geometry
+
+    candidate_region = None
+    if check_crossings:
+        candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+
     for di, dj in DIRECTIONS:
         neighbor_is_water = shifted(water_float, di, dj)
         neighbor_is_water = np.nan_to_num(neighbor_is_water, nan=0.0) >= 0.5
         blocked = water_mask | neighbor_is_water
+
+        if check_crossings:
+            crossing_blocked = _compute_step_crossing_blocked(
+                merged_water_geometry, lats, lons, di, dj, candidate_region=candidate_region
+            )
+            blocked = blocked | crossing_blocked
+
         cost_arrays[(di, dj)] = np.where(blocked, np.inf, cost_arrays[(di, dj)])
     return cost_arrays
 
 
 def build_stream_proximity_mask(stream_lines: list[LineString], lats: np.ndarray,
-                                  lons: np.ndarray, buffer_m: float = STREAM_BUFFER_M) -> np.ndarray:
-    """Rasterizes a buffer_m-wide corridor around stream_lines onto the grid. Returns a boolean array where True marks a cell within that corridor."""
+                                  lons: np.ndarray, buffer_m: float = STREAM_BUFFER_M):
+    """
+    Rasterizes a buffer_m-wide corridor around stream_lines onto the
+    grid. Returns (buffered_geometry, stream_mask) — the buffered
+    geometry is needed by apply_stream_proximity_penalty's crossing
+    check (see its docstring), not just the rasterized mask.
+    """
     n_rows, n_cols = len(lats), len(lons)
     if not stream_lines:
-        return np.zeros((n_rows, n_cols), dtype=bool)
+        return None, np.zeros((n_rows, n_cols), dtype=bool)
 
     merged = unary_union(stream_lines)
     mid_lat = float(np.mean(lats))
@@ -716,20 +921,98 @@ def build_stream_proximity_mask(stream_lines: list[LineString], lats: np.ndarray
     buffered = merged.buffer(buffer_deg)
 
     lon_grid, lat_grid = np.meshgrid(lons, lats)
-    return shapely.contains_xy(buffered, lon_grid, lat_grid)
+    return buffered, shapely.contains_xy(buffered, lon_grid, lat_grid)
 
 
 def apply_stream_proximity_penalty(cost_arrays: dict, stream_mask: np.ndarray,
-                                     weight: float = STREAM_PROXIMITY_WEIGHT) -> dict:
-    """Multiplies the cost of any edge within the stream-proximity buffer by weight. This is a soft penalty, not a hard block."""
+                                     weight: float = STREAM_PROXIMITY_WEIGHT,
+                                     lats: np.ndarray = None, lons: np.ndarray = None,
+                                     merged_stream_geometry=None, local_stream_geometry=None) -> dict:
+    """
+    Multiplies the cost of any edge within the stream-proximity buffer by
+    weight. This is a soft penalty, not a hard block.
+
+    Same crossing-check fix as apply_water_mask (see its docstring for
+    the full rationale) — a step that jumps clean over a stream's buffer
+    zone without either endpoint touching it would otherwise silently
+    dodge the soft penalty entirely, not just the hard-block case.
+
+    local_stream_geometry: same reasoning as apply_water_mask's
+    local_water_geometry — the candidate-region pre-filter's .buffer()
+    call must run on a small, per-bbox-local geometry, never the
+    enormous precomputed national stream union (93,891 lines), which
+    caused a real multi-minute hang in production when buffered
+    per-request.
+    """
     if weight == 1.0:
         return cost_arrays
+
     stream_float = stream_mask.astype(np.float64)
+    check_crossings = (merged_stream_geometry is not None and lats is not None and lons is not None)
+    buffer_source = local_stream_geometry if local_stream_geometry is not None else merged_stream_geometry
+
+    candidate_region = None
+    if check_crossings:
+        candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+
     for di, dj in DIRECTIONS:
         neighbor_in_zone = shifted(stream_float, di, dj)
         neighbor_in_zone = np.nan_to_num(neighbor_in_zone, nan=0.0) >= 0.5
         in_zone = stream_mask | neighbor_in_zone
+
+        if check_crossings:
+            crossing_in_zone = _compute_step_crossing_blocked(
+                merged_stream_geometry, lats, lons, di, dj, candidate_region=candidate_region
+            )
+            in_zone = in_zone | crossing_in_zone
+
         cost_arrays[(di, dj)] = np.where(in_zone, cost_arrays[(di, dj)] * weight, cost_arrays[(di, dj)])
+    return cost_arrays
+
+
+def apply_bridge_crossings(cost_arrays: dict, original_cost_arrays: dict,
+                             lats: np.ndarray, lons: np.ndarray,
+                             merged_bridge_geometry, local_bridge_geometry=None) -> dict:
+    """
+    Fix #3: restores the ORIGINAL (pre-water-masking) cost for any edge
+    that crosses a real, mapped bridge — even though apply_water_mask
+    already set it to infinity. This is deliberately an "allow-list on
+    top of a block", applied AFTER water/stream masking, not a way of
+    deciding fords are safe: per the river-crossing safety research that
+    shaped this design, real danger (current speed, depth right now,
+    recent rain) can't be judged from static map data, so the only
+    crossing ever treated as legitimate is a real, physical bridge — a
+    fact, not an inference.
+
+    original_cost_arrays must be a snapshot taken BEFORE
+    apply_water_mask/apply_stream_proximity_penalty ran (see
+    build_grid_state) — restoring to that snapshot, rather than to some
+    made-up "bridge cost", means walking a bridge costs exactly what the
+    terrain/distance model already says that step should cost, nothing
+    more or less.
+
+    Reuses _compute_step_crossing_blocked and
+    _compute_candidate_crossing_region — same multi-sample-along-the-step
+    logic used to detect a water crossing, just applied to bridge
+    geometry instead, and used to ALLOW rather than block. Same local-
+    geometry-for-buffering requirement as apply_water_mask — see its
+    docstring and build_grid_state's clipping step for why merged_bridge_geometry
+    (which is fine to be a national precomputed union for the cheap
+    contains_xy checks) must NOT be what gets passed to the buffer step.
+    """
+    check_crossings = (merged_bridge_geometry is not None and lats is not None and lons is not None)
+    if not check_crossings:
+        return cost_arrays
+
+    buffer_source = local_bridge_geometry if local_bridge_geometry is not None else merged_bridge_geometry
+    candidate_region = _compute_candidate_crossing_region(buffer_source, lats, lons)
+
+    for di, dj in DIRECTIONS:
+        on_bridge = _compute_step_crossing_blocked(
+            merged_bridge_geometry, lats, lons, di, dj, candidate_region=candidate_region
+        )
+        cost_arrays[(di, dj)] = np.where(on_bridge, original_cost_arrays[(di, dj)], cost_arrays[(di, dj)])
+
     return cost_arrays
 
 
@@ -1000,6 +1283,16 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
     overpass_executor = ThreadPoolExecutor(max_workers=1)
     overpass_future = overpass_executor.submit(get_water_and_stream_geometries, bbox)
 
+    # Bridge crossings (fix #3) are fetched below, AFTER the water/stream
+    # future resolves — not here. Both ultimately call the same shared
+    # _load_local_water_index() cache; calling it concurrently from here
+    # (main thread) while get_water_and_stream_geometries loads it on the
+    # background thread is a real race — the guard flag can be set
+    # before the data is actually populated, so a badly-timed concurrent
+    # call sees "already attempted" and gets back None/empty, even though
+    # the background thread finishes loading correctly moments later.
+    # Confirmed this exact failure mode by testing before shipping it.
+
     mosaic, origin_x, origin_y = fetch_dem_mosaic(bbox, zoom)
     t1 = time.time()
 
@@ -1024,6 +1317,13 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
         overpass_executor.shutdown(wait=False)
         water_lookup_s = time.time() - t_overpass_start
 
+        # Safe to call now — _local_water_index is guaranteed populated
+        # at this point (overpass_future.result() already returned,
+        # meaning get_water_and_stream_geometries's call chain has
+        # finished loading it), unlike calling this earlier alongside
+        # the concurrent DEM fetch, which raced with the load itself.
+        bridge_lines = query_local_bridge_data(bbox)
+
         t_mask_start = time.time()
         # By the time overpass_future has resolved, _load_local_water_index()
         # has already run as a side effect of get_water_and_stream_geometries
@@ -1036,15 +1336,43 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
         # for an arbitrary per-request Overpass result, so union fresh,
         # exactly as before.
         if _local_water_index is not None:
-            water_mask = rasterize_precomputed_geometry(
-                _local_water_index["global_water_union"], lats, lons
-            )
-            stream_mask = rasterize_precomputed_geometry(
-                _local_water_index["global_stream_buffer_union"], lats, lons
-            )
+            water_geometry = _local_water_index["global_water_union"]
+            stream_geometry = _local_water_index["global_stream_buffer_union"]
+            water_mask = rasterize_precomputed_geometry(water_geometry, lats, lons)
+            stream_mask = rasterize_precomputed_geometry(stream_geometry, lats, lons)
+
+            # CRITICAL, SECOND FIX: unioning water_polygons/stream_lines
+            # directly (as a first attempt at this fix did) is still not
+            # safe — the per-bbox filter in query_local_water_data
+            # matches on BOUNDING BOX intersection, so a single real
+            # river or coastline feature spanning many kilometers (and
+            # thousands of vertices) can be pulled in WHOLE just for
+            # passing near this bbox at one point, even though the
+            # FEATURE COUNT stays small. Confirmed directly: a single
+            # 5000-vertex LineString among just 32 total features took
+            # 28.79s to buffer on its own — NZ's real rivers can be far
+            # longer/more complex than that synthetic test, and this is
+            # what caused a real 356-second hang in production despite
+            # the "small union" fix above. CLIPPING each feature to the
+            # query bbox (with a little padding) before unioning bounds
+            # the actual vertex complexity that ever reaches .buffer(),
+            # regardless of how long the original mapped feature is.
+            min_lat, min_lon, max_lat, max_lon = bbox
+            clip_pad = max(lat_step, lon_step) * 5  # a few cells of padding
+            clip_box = box(min_lon - clip_pad, min_lat - clip_pad,
+                             max_lon + clip_pad, max_lat + clip_pad)
+            clipped_water = [p.intersection(clip_box) for p in water_polygons]
+            clipped_water = [p for p in clipped_water if not p.is_empty]
+            clipped_streams = [l.intersection(clip_box) for l in stream_lines]
+            clipped_streams = [l for l in clipped_streams if not l.is_empty]
+            local_water_union = unary_union(clipped_water) if clipped_water else None
+            local_stream_union = unary_union(clipped_streams) if clipped_streams else None
         else:
-            water_mask = build_water_mask(water_polygons, lats, lons)
-            stream_mask = build_stream_proximity_mask(stream_lines, lats, lons)
+            water_geometry, water_mask = build_water_mask(water_polygons, lats, lons)
+            stream_geometry, stream_mask = build_stream_proximity_mask(stream_lines, lats, lons)
+            # Already small (per-bbox) in this branch — safe to reuse directly.
+            local_water_union = water_geometry
+            local_stream_union = stream_geometry
         mask_compute_s = time.time() - t_mask_start
 
         n_water_features = len(water_polygons)
@@ -1053,15 +1381,70 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
         overpass_executor.shutdown(wait=False)
         water_mask = np.zeros((n_rows, n_cols), dtype=bool)
         stream_mask = np.zeros((n_rows, n_cols), dtype=bool)
+        water_geometry = None
+        stream_geometry = None
+        local_water_union = None
+        local_stream_union = None
+        bridge_lines = []
         n_water_features = 0
         n_stream_features = 0
         print(f"WARNING: water/stream lookup failed ({e}) — routing without water "
               f"blocking or stream penalty.")
+        # This catch-all was hiding exactly which line raised an internal
+        # bug behind a bare str(e) — fine for an EXPECTED external
+        # failure (a real Overpass network error), useless for debugging
+        # an internal one. Print the full traceback too, so a bug like
+        # this is diagnosable from the very next run instead of guessing.
+        import traceback
+        traceback.print_exc()
     t2b = time.time()
 
     cost_arrays = compute_directional_costs(elevation_grid, lats, lat_step, lon_step)
-    apply_stream_proximity_penalty(cost_arrays, stream_mask)
-    apply_water_mask(cost_arrays, water_mask)
+
+    # Snapshot BEFORE any water/stream masking — apply_bridge_crossings
+    # restores TO this, so walking a bridge costs exactly what the
+    # terrain/distance model already says, not some made-up "bridge
+    # cost". Must be a deep-ish copy per direction array, not the same
+    # arrays that are about to be mutated in place below.
+    original_cost_arrays = {k: v.copy() for k, v in cost_arrays.items()}
+
+    apply_stream_proximity_penalty(cost_arrays, stream_mask, lats=lats, lons=lons,
+                                     merged_stream_geometry=stream_geometry,
+                                     local_stream_geometry=local_stream_union)
+    apply_water_mask(cost_arrays, water_mask, lats=lats, lons=lons,
+                       merged_water_geometry=water_geometry,
+                       local_water_geometry=local_water_union)
+
+    # Fix #3: restore bridge crossings AFTER water masking, not before —
+    # this is deliberately an allow-list layered on top of the block, not
+    # a way of avoiding it in the first place. Same clip-before-buffer
+    # requirement as water/stream (see build_grid_state's water/stream
+    # clipping comment above) — bridges are far fewer nationally, but the
+    # exact same class of mistake (buffering an unclipped, potentially
+    # long feature) applies equally here, so it's applied proactively
+    # rather than waiting to find out the hard way a second time.
+    n_bridge_features = len(bridge_lines)
+    if bridge_lines:
+        min_lat_b, min_lon_b, max_lat_b, max_lon_b = bbox
+        bridge_clip_pad = max(lat_step, lon_step) * 5
+        bridge_clip_box = box(min_lon_b - bridge_clip_pad, min_lat_b - bridge_clip_pad,
+                                max_lon_b + bridge_clip_pad, max_lat_b + bridge_clip_pad)
+        clipped_bridges = [l.intersection(bridge_clip_box) for l in bridge_lines]
+        clipped_bridges = [l for l in clipped_bridges if not l.is_empty]
+        local_bridge_union = unary_union(clipped_bridges) if clipped_bridges else None
+
+        merged_bridge_geometry = None
+        if _local_water_index is not None:
+            merged_bridge_geometry = _local_water_index.get("global_bridge_buffer_union")
+        if merged_bridge_geometry is None:
+            # No precomputed national bridge buffer available (e.g. an
+            # old-format pickle) — the local (already clipped, already
+            # small) union is a fine, safe substitute for the
+            # correctness check too in this fallback case.
+            merged_bridge_geometry = local_bridge_union
+
+        apply_bridge_crossings(cost_arrays, original_cost_arrays, lats, lons,
+                                 merged_bridge_geometry, local_bridge_geometry=local_bridge_union)
     t3 = time.time()
 
     if verbose:
@@ -1071,7 +1454,8 @@ def build_grid_state(bbox: tuple[float, float, float, float] = DEFAULT_TEST_BBOX
               f"water/stream wait after grid ready: {t2b - t2:.2f}s (lookup total: {water_lookup_s:.2f}s, "
               f"mask compute: {mask_compute_s:.2f}s; {n_water_features} water features, "
               f"{n_blocked} cells blocked; {n_stream_features} stream features, "
-              f"{n_stream_zone} cells in proximity zone, of {n_rows * n_cols} total), "
+              f"{n_stream_zone} cells in proximity zone; {n_bridge_features} bridge crossings, "
+              f"of {n_rows * n_cols} total), "
               f"cost arrays: {t3 - t2b:.3f}s, total: {t3 - t0:.2f}s")
 
     return {
@@ -1098,12 +1482,22 @@ def find_nearest_rc(lats: np.ndarray, lons: np.ndarray,
 
 def route_between_waypoints(grid_state: dict,
                               waypoint_a: tuple[float, float],
-                              waypoint_b: tuple[float, float]) -> dict:
+                              waypoint_b: tuple[float, float],
+                              label_a: str = "Start point",
+                              label_b: str = "End point") -> dict:
     """
     Routes between two waypoints using an already-built grid state. This
     is the inexpensive per-request path: grid_state is built once and
     reused across many calls, and only the waypoint-snapping and A* search
     happen here.
+
+    label_a/label_b name waypoint_a/waypoint_b in the water-blocked error
+    message below. Default to "Start point"/"End point" for the plain
+    2-point case; route_via_waypoints passes more specific labels (e.g.
+    "Waypoint 2") for each leg of a multi-waypoint chain, so a blocked
+    waypoint in the middle of the sequence doesn't get reported as a
+    generic "Start point"/"End point" of whichever leg happened to touch
+    it — see route_via_waypoints for how those labels are chosen.
     """
     lats, lons = grid_state["lats"], grid_state["lons"]
     cost_arrays = grid_state["cost_arrays"]
@@ -1124,13 +1518,13 @@ def route_between_waypoints(grid_state: dict,
         if water_mask[start_rc]:
             return {
                 "ok": False,
-                "error": "Start point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "error": f"{label_a} falls within a mapped water or snow/ice body — pick a point on dry land.",
                 "retry_worthy": False,
             }
         if water_mask[goal_rc]:
             return {
                 "ok": False,
-                "error": "End point falls within a mapped water or snow/ice body — pick a point on dry land.",
+                "error": f"{label_b} falls within a mapped water or snow/ice body — pick a point on dry land.",
                 "retry_worthy": False,
             }
 
@@ -1441,6 +1835,27 @@ def route_any_two_points(waypoint_a: tuple[float, float],
     )
 
 
+def _waypoint_label(index: int, n_waypoints: int) -> str:
+    """
+    Names a waypoint by its position in a full multi-waypoint sequence,
+    for use in route_via_waypoints' error messages. index 0 is always
+    "Start point" and the last index is always "End point"; everything
+    between is "Waypoint N" (matching the site's own terminology for the
+    points placed between start and end, not "via point"), numbered to
+    match how route_with_waypoints builds the full sequence
+    (all_waypoints = [waypoint_a] + list(via) + [waypoint_b]) — so index
+    1 is via[0] ("Waypoint 1"), index 2 is via[1] ("Waypoint 2"), and so
+    on, matching the "via" list a caller actually sent (the "via" name
+    here is this API's own internal field name, unrelated to the
+    site's user-facing "waypoint" terminology).
+    """
+    if index == 0:
+        return "Start point"
+    if index == n_waypoints - 1:
+        return "End point"
+    return f"Waypoint {index}"
+
+
 def route_via_waypoints(waypoints: list[tuple[float, float]],
                           node_budget: int = DEFAULT_NODE_BUDGET,
                           padding_frac: float = 0.3,
@@ -1463,6 +1878,8 @@ def route_via_waypoints(waypoints: list[tuple[float, float]],
     if len(waypoints) < 2:
         raise ValueError("Need at least 2 waypoints")
 
+    n_waypoints = len(waypoints)
+
     def attempt_fn(grid_state):
         total_distance_km = 0.0
         total_hours = 0.0
@@ -1470,7 +1887,9 @@ def route_via_waypoints(waypoints: list[tuple[float, float]],
         full_coords = []
         full_elevations = []
         for leg_num, (a, b) in enumerate(zip(waypoints[:-1], waypoints[1:]), start=1):
-            leg = route_between_waypoints(grid_state, a, b)
+            label_a = _waypoint_label(leg_num - 1, n_waypoints)
+            label_b = _waypoint_label(leg_num, n_waypoints)
+            leg = route_between_waypoints(grid_state, a, b, label_a=label_a, label_b=label_b)
             if not leg["ok"]:
                 return {
                     "ok": False,
@@ -1620,6 +2039,15 @@ def create_app(node_budget: int = DEFAULT_NODE_BUDGET):
     @app.route("/route", methods=["POST"])
     def route():
         body = request.get_json(force=True)
+
+        if body.get("warm"):
+            try:
+                _warm_up()
+            except Exception as e:
+                print(f"WARNING: warm-up failed ({e}) — the next real request "
+                      f"will pay the cold-start cost itself instead.")
+            return jsonify({"ok": True, "warm": True})
+
         a = tuple(body["a"])
         b = tuple(body["b"])
         via = [tuple(p) for p in body.get("via", [])] or None
@@ -1651,6 +2079,46 @@ CORS_HEADERS = {
 }
 
 
+def _warm_up():
+    """
+    Performs the expensive one-time cold-start work ahead of a real route
+    request, so it's already done by the time the user actually clicks
+    Generate Route: loads the local water/stream/bridge dataset (62,066
+    water polygons, 94,835 stream lines, 23,028 bridge crossings — see
+    prefetch_nz_water_data.py — building all three STRtree spatial
+    indexes), and runs a tiny synthetic A* search purely to trigger
+    Numba's JIT compilation of the core search functions ahead of time.
+    Both are real, measured costs from earlier in this project — this
+    doesn't remove either cost, it just relocates WHEN it's paid: from
+    "the moment a user clicks Generate and is watching a spinner" to
+    "whenever the frontend fires a warm-up ping after the page loads",
+    which is invisible to them either way.
+
+    Touches nothing LINZ/DEM-related — no real coordinates are involved
+    here, so there's no reason to burn a network call for tiles nobody
+    has asked about yet.
+
+    Safe to call more than once: _load_local_water_index() already
+    caches itself (see its own module-level guard), and Numba's
+    cache=True means a second JIT "compilation" this session is just a
+    cache lookup, not a repeat of the real work.
+    """
+    _load_local_water_index()
+
+    # A minimal synthetic grid, just large enough to exercise every
+    # Numba-jitted code path (all 16 directions, the heap push/pop, the
+    # heuristic) — the actual result is thrown away; only the
+    # compilation side effect matters.
+    tiny_lats = np.array([-41.0, -41.0001, -41.0002])
+    tiny_lons = np.array([174.0, 174.0001, 174.0002])
+    tiny_elevation = np.zeros((3, 3))
+    tiny_costs = compute_directional_costs(
+        tiny_elevation, tiny_lats,
+        abs(tiny_lats[1] - tiny_lats[0]), abs(tiny_lons[1] - tiny_lons[0]),
+    )
+    astar_on_grid(tiny_costs, tiny_lats, tiny_lons, (0, 0), (2, 2))
+
+
 def lambda_handler(event, context):
     method = (
         event.get("requestContext", {}).get("http", {}).get("method")
@@ -1666,12 +2134,34 @@ def lambda_handler(event, context):
         if event.get("isBase64Encoded"):
             raw_body = base64.b64decode(raw_body).decode("utf-8")
         payload = json.loads(raw_body)
+    except (TypeError, ValueError, json.JSONDecodeError) as e:
+        return {
+            "statusCode": 400,
+            "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
+            "body": json.dumps({"ok": False, "error": redact_api_keys(f"Bad request: {e}")}),
+        }
 
+    # Lambda warming — see _warm_up()'s docstring. Checked before requiring
+    # "a"/"b" to be present, since a warm-up ping deliberately carries
+    # neither.
+    if payload.get("warm"):
+        try:
+            _warm_up()
+        except Exception as e:
+            # A failed warm-up should never surface as an error the
+            # frontend has to handle — worst case, the next real request
+            # just pays the cold-start cost itself, exactly as it would
+            # have without this feature at all.
+            print(f"WARNING: warm-up failed ({e}) — the next real request "
+                  f"will pay the cold-start cost itself instead.")
+        return {"statusCode": 200, "headers": CORS_HEADERS, "body": json.dumps({"ok": True, "warm": True})}
+
+    try:
         waypoint_a = tuple(payload["a"])
         waypoint_b = tuple(payload["b"])
         via = [tuple(p) for p in payload.get("via", [])] or None
         node_budget = int(payload.get("node_budget", DEFAULT_NODE_BUDGET))
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError) as e:
+    except (KeyError, TypeError, ValueError) as e:
         return {
             "statusCode": 400,
             "headers": {**CORS_HEADERS, "Content-Type": "application/json"},
@@ -1744,3 +2234,5 @@ if __name__ == "__main__":
 
     write_gpx_file(result, args.out)
     print(f"Saved route to {args.out}")
+
+handler = lambda_handler
