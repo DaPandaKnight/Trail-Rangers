@@ -25,8 +25,8 @@
   const steps = [
     {
       target: '#tutorial-layers',
-      title: 'Explore the terrain',
-      copy: 'Switch between aerial imagery and the topographic overlay. Adjust the opacity to compare terrain details.',
+      title: 'Adjust the terrain view',
+      copy: 'Use the Topo Opacity slider to balance topographic details with the aerial imagery underneath.',
       placement: 'right'
     },
     {
