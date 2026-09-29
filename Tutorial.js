@@ -26,7 +26,7 @@
     {
       target: '#tutorial-layers',
       title: 'Adjust the terrain view',
-      copy: 'Use the Topo Opacity slider to balance topographic details with the aerial imagery underneath.',
+      copy: 'Use the Topo Opacity slider to adjust how clearly the topographic layer appears on the map.',
       placement: 'right'
     },
     {
@@ -38,7 +38,7 @@
     {
       target: '.tutorial-pin-controls',
       title: 'Set your route points',
-      copy: 'Select Start Pin or End Pin, then click the desired location on the map.',
+      copy: 'Move the map to the desired location, then select Start Pin or End Pin. Drag each pin to fine-tune its position.',
       placement: 'right'
     },
     {
