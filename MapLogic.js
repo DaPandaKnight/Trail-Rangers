@@ -247,38 +247,29 @@ map.on('mousemove', event => {const {lng,lat} = event.lngLat;
 // MAP LAYER CONTROLS
 // ========================================================================
 
-// Aerial imagery
-document
-  .getElementById('toggle-aerial')
-  .addEventListener('change',event => {
-      map.setLayoutProperty('aerial-layer','visibility', event.target.checked? 'visible': 'none');
+
+
+// Topographic map slider
+const opacitySlider = document.getElementById('topo-opacity');
+const opacityVal    = document.getElementById('opacity-val');
+
+function updateTopo() {
+  const value = Number(opacitySlider.value);   // 0–100
+  topoOpacity = value / 100;
+  topoVisible = value > 0;
+
+  // Keep layers visible (in case an earlier bug hid them)
+  for (const id of topoLayerIds) {
+    if (map.getLayer(id)) {
+      map.setLayoutProperty(id, 'visibility', topoVisible ? 'visible' : 'none');
     }
-  );
+  }
 
+  applyTopoOpacity(topoOpacity);
+  opacityVal.textContent = `${value}%`;
+}
+opacitySlider.addEventListener('input', updateTopo);
 
-// Topographic map
-document
-  .getElementById('toggle-topo')
-  .addEventListener('change',
-    event => {topoVisible = event.target.checked;
-      const visibility =topoVisible? 'visible': 'none';
-
-      for (const id of topoLayerIds) {
-        if (map.getLayer(id)) {
-          map.setLayoutProperty(id, 'visibility', visibility);
-        }
-      }
-    }
-  );
-
-  // ── Opacity slider ───────────────────────────────────────────────────────
-  const opacitySlider = document.getElementById('topo-opacity');
-  const opacityVal    = document.getElementById('opacity-val');
-  opacitySlider.addEventListener('input', () => {
-    topoOpacity = opacitySlider.value / 100;
-    applyTopoOpacity(topoOpacity);
-    opacityVal.textContent = `${opacitySlider.value}%`;
-  });
 
 
   // ── Route planner ────────────────────────────────────────────────────────
@@ -293,7 +284,7 @@ document
   const START_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--accent'); //'#e2660a'
   const END_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--accent2'); //'#178f66'
   const VIA_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--via'); //'#2f6fed'
-  const PREVIEW_LINE_COLOR = '#7a7266'; // matches --muted — marks it as a straight preview, not a real route
+  const PREVIEW_LINE_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--muted');//'#7a7266'
 
   const MAX_WAYPOINTS = 7; // start + up to 5 via points + end
 
@@ -1306,7 +1297,7 @@ function hideLoadingScreen() {
 // ========================================================================
 // INITIAL UI STATE
 // ========================================================================
-
+updateTopo()
 renderFixedPoints();
 updateGenerateButton();
 updateAddButton();

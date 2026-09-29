@@ -76,35 +76,6 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
   display: block;
 }
 
-/* Layer toggles */
-.layer-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.layer-name { font-size: 1rem; color: var(--text); min-width: 150px; }
-
-/* Toggle switch */
-.toggle {
-  position: relative;
-  width: 52px;
-  height: 28px;
-  flex-shrink: 0;
-}
-.toggle input { opacity: 0; width: 0; height: 0; }
-.toggle-slider {
-  position: absolute; inset: 0; cursor: pointer;
-  background: var(--border); border-radius: 28px;
-  transition: background 0.2s;
-}
-.toggle-slider::before {
-  content: ''; position: absolute;
-  width: 22px; height: 22px; left: 3px; top: 3px;
-  background: var(--muted); border-radius: 50%;
-  transition: transform 0.2s, background 0.2s;
-}
-.toggle input:checked + .toggle-slider { background: color-mix(in srgb, var(--accent) 30%, var(--border)); }
-.toggle input:checked + .toggle-slider::before { transform: translateX(24px); background: var(--accent); }
 
 /* Opacity slider */
 .opacity-row { display: flex; flex-direction: column; gap: 8px; }
