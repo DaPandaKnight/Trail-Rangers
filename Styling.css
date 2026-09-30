@@ -171,7 +171,8 @@ input[type=range]::-webkit-slider-thumb {
 }
 .route-point-row[hidden] { display: none; }
 
-.route-points[hidden] { display: none; }
+.route-points[hidden],
+.route-points:empty { display: none; }
 
 /* Via rows are reorderable — drag the whole cell */
 .route-point-row.is-via {
@@ -237,10 +238,23 @@ input[type=range]::-webkit-slider-thumb {
 
 #mode-fixed, #mode-multi { margin-bottom: 10px; }
 
-.btn-primary, .btn-secondary {
+.btn-primary {
   flex: 1;
   min-height: 48px;
-  padding: 14px 0;
+  padding: 12px 0;
+  font-family: 'DM Mono', monospace;
+  font-size: 0.92rem;
+  font-weight: 500;
+  letter-spacing: 0.03em;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, opacity 0.15s;
+}
+
+.btn-secondary {
+  flex: 1;
+  min-height: 44px;
+  padding: 12px 0;
   font-family: 'DM Mono', monospace;
   font-size: 0.92rem;
   font-weight: 500;

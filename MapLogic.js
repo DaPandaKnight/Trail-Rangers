@@ -281,10 +281,10 @@ opacitySlider.addEventListener('input', updateTopo);
   // (MapLibre disables map panning while a marker drag is in progress), so
   // this sidesteps any conflict with the map's own click-and-drag panning.
 
-  const START_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--accent'); //'#e2660a'
-  const END_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--accent2'); //'#178f66'
-  const VIA_COLOR   = getComputedStyle(document.documentElement).getPropertyValue('--via'); //'#2f6fed'
-  const PREVIEW_LINE_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--muted');//'#7a7266'
+  const START_COLOR = '#e2660a'; // 'accent-1'
+  const END_COLOR   = '#178f66'; // 'accent-2'
+  const VIA_COLOR   = '#2f6fed'; // 'via'
+  const PREVIEW_LINE_COLOR = '#7a7266'; // --muted
 
   const MAX_WAYPOINTS = 7; // start + up to 5 via points + end
 
@@ -390,25 +390,16 @@ function updateRouteHint() {
   if (routeLoading) {return;}
 
   if (routeMode === 'fixed') {
-    if (fixedStart && fixedEnd) {
-      routeHintEl.textContent = 'Ready — hit Generate Route';
-    } else if (!fixedStart) {
-      routeHintEl.textContent = "Press 'Start Pin' to place your starting point";
-    } else {
-      routeHintEl.textContent = "Press 'End Pin' to place your end point, then drag pins to fine-tune";
-    }
+    routeHintEl.textContent = (fixedStart && fixedEnd) ? 'Ready — hit Generate Route' : '';
     return;
   }
 
-  if (waypoints.length === 0) {
-    routeHintEl.textContent = 'Add at least two waypoints to plan a route';
-  } else if (waypoints.length === 1) {
-    routeHintEl.textContent = 'Add an end point, then drag pins to fine-tune';
-  } else if (waypoints.length === 2) {
-    routeHintEl.textContent = 'Add a waypoint to your route';
+  if (waypoints.length < 3) {
+    routeHintEl.textContent = '';
   } else if (waypoints.length === 3) {
-    routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint, or add waypoints as needed';
-  } else {
+    routeHintEl.textContent = 'Ready — hit Generate Route to pass through 1 waypoint';
+  } 
+  else {
     routeHintEl.textContent =
       `Ready — hit Generate Route to pass through ${waypoints.length - 2} waypoints.`;
   }
@@ -1041,7 +1032,7 @@ if (exportGPXBtn) {
   const routeCoordinates = routeFeature.geometry.coordinates;
 
   // Trace the line in from start to end over ~2s instead of snapping it in.
-  animateRouteLine(routeCoordinates, 2000);
+  animateRouteLine(routeCoordinates, 3000);
 
   // Zoom map to generated route
   const bounds = routeCoordinates.reduce(
