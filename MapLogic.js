@@ -1,6 +1,5 @@
 // ── CONFIG ───────────────────────────────────────────────────────────────
 
-// No LINZ key here anymore — it lives server-side.
 const API_BASE =
   'https://k3w7aj90ok.execute-api.ap-southeast-2.amazonaws.com';
 
@@ -93,10 +92,6 @@ const map = new maplibregl.Map({
   minZoom: 4,
   maxZoom: 19,
 
-  // Disabled here and added manually below, so it can be explicitly
-  // anchored to bottom-left instead of MapLibre's default bottom-right —
-  // that corner was colliding with the coordinate display bubble once
-  // the attribution text grew to include OSM's credit alongside LINZ's.
   attributionControl: false,
 
   transformRequest:
@@ -258,7 +253,6 @@ function updateTopo() {
   topoOpacity = value / 100;
   topoVisible = value > 0;
 
-  // Keep layers visible (in case an earlier bug hid them)
   for (const id of topoLayerIds) {
     if (map.getLayer(id)) {
       map.setLayoutProperty(id, 'visibility', topoVisible ? 'visible' : 'none');
@@ -273,13 +267,10 @@ opacitySlider.addEventListener('input', updateTopo);
 
 
   // ── Route planner ────────────────────────────────────────────────────────
-  // Add the ability to have multiple waypoints, waypoints will now be stored in an array
+  // Waypoints will now be stored in an array
   // Each point will have a role assigned to it (start, end, via) and the role will be assigned based
   // on the position of the waypoint on the array. this will make adding and removing waypoints more seamlessly
   // Add waypoint button will add waypoints on the map and the points will be displayed on the side panel 
-  // Each pin owns its own drag gesture
-  // (MapLibre disables map panning while a marker drag is in progress), so
-  // this sidesteps any conflict with the map's own click-and-drag panning.
 
   const START_COLOR = '#e2660a'; // 'accent-1'
   const END_COLOR   = '#178f66'; // 'accent-2'
@@ -448,12 +439,8 @@ function clearRouteLine() {
 
 
 // ========================================================================
-// STRAIGHT-LINE PREVIEW (client-side only, no backend call)
+// STRAIGHT-LINE PREVIEW 
 // ========================================================================
-// Rebuilding this line on every single 'drag' event (which can fire dozens
-// of times a second on a fast drag) is what caused it to flicker/disappear.
-// Instead we just record that a redraw is needed and do at most one per
-// animation frame, so it always draws smoothly no matter how fast you drag.
 
 let previewFrameId = null;
 
@@ -785,8 +772,6 @@ function onWaypointDragEnd() {
 }
 
 // this function is to change the color of pin when its role is changed
-// might need to rethink how to do this if where to scale into more waypoints as this is not very efficient
-// but works for right now so I will keep it this way
 function rebuildMarkers() {
   waypoints.forEach((wp, i) => {
     const role = roleForIndex(i, waypoints.length);
@@ -826,7 +811,6 @@ function rebuildMarkers() {
   });
 }
 
-// add and remove waypoint functions 
 function addWaypointAtCenter() {
   if (waypoints.length >= MAX_WAYPOINTS) return;
   const center = map.getCenter();
@@ -885,16 +869,11 @@ function resetRoute() {
   updateRouteHint();
 }
 
-
-// ========================================================================
-// DRAW ROUTE
-// ========================================================================
-
 // ========================================================================
 // ROUTE LINE — DRAWN PROGRESSIVELY, START TO END
 // ========================================================================
 // Rather than handing MapLibre the whole geometry in one setData() call, we
-// walk along the actual route coordinates over ~2 seconds so the line looks
+// walk along the actual route coordinates over ~3 seconds so the line looks
 // like it's being traced out live, the same way the backend traced it.
 
 let routeDrawAnimationId = null;
@@ -1031,7 +1010,7 @@ if (exportGPXBtn) {
 
   const routeCoordinates = routeFeature.geometry.coordinates;
 
-  // Trace the line in from start to end over ~2s instead of snapping it in.
+  // Trace the line in from start to end over ~3s instead of snapping it in.
   animateRouteLine(routeCoordinates, 3000);
 
   // Zoom map to generated route
@@ -1315,7 +1294,7 @@ updateRouteHint();
 
 (() => {
 
-  // ── Config ─────────────────────────────────────────────────────────────
+  // Config 
   const GEOCODER_URL       = 'https://photon.komoot.io/api';
   const SEARCH_MIN_CHARS   = 2;
   const SEARCH_DEBOUNCE_MS = 350;   // also keeps us well under 1 req/sec
@@ -1338,7 +1317,7 @@ updateRouteHint();
     trailhead: 15, viewpoint: 15, parking: 16, information: 15,
   };
 
-  // ── Elements ───────────────────────────────────────────────────────────
+  // Elements 
   const searchEl        = document.getElementById('search');
   const searchShellEl   = searchEl && searchEl.querySelector('.search-shell');
   const searchToggleEl  = document.getElementById('search-toggle');
@@ -1354,7 +1333,7 @@ updateRouteHint();
     return;
   }
 
-  // ── State ──────────────────────────────────────────────────────────────
+  // State 
   let searchOpen        = false;
   let searchDebounceId  = null;
   let searchController  = null;   // AbortController for the in-flight request
