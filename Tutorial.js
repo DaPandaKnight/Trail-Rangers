@@ -78,7 +78,14 @@
         border-radius: 10px;
         font-size: 0.9rem;
       }
-
+     #tutorial-tooltip button:focus,
+     #tutorial-welcome button:focus,
+     #initial-disclaimer button:focus,
+     #licence-modal button:focus {
+       outline: 3px solid #15966f !important;
+       outline-offset: 4px !important;
+       box-shadow: 0 0 0 2px #ffffff !important;
+     }
     @media (max-width: 768px) {
       #tutorial-tooltip {
         width: auto;
@@ -440,25 +447,29 @@
 
 function keepFocusInside(event, container) {
   const focusable = getFocusableElements(container);
+
   if (focusable.length === 0) return;
 
-  const firstElement = focusable[0];
-  const lastElement = focusable[focusable.length - 1];
-  const currentElement = document.activeElement;
+  // JavaScript controls every Tab movement directly 
+  event.preventDefault();
 
-  if (!container.contains(currentElement)) {
-    event.preventDefault();
-    firstElement.focus();
-    return;
+  const currentIndex = focusable.indexOf(document.activeElement);
+  let nextIndex;
+
+  if (event.shiftKey) {
+    nextIndex =
+      currentIndex <= 0
+        ? focusable.length - 1
+        : currentIndex - 1;
+  } else {
+    nextIndex =
+      currentIndex < 0 ||
+      currentIndex === focusable.length - 1
+        ? 0
+        : currentIndex + 1;
   }
 
-  if (event.shiftKey && currentElement === firstElement) {
-    event.preventDefault();
-    lastElement.focus();
-  } else if (!event.shiftKey && currentElement === lastElement) {
-    event.preventDefault();
-    firstElement.focus();
-  }
+  focusable[nextIndex].focus();
 }
   document
     .getElementById('tutorial-start')
