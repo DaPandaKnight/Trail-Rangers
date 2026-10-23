@@ -418,7 +418,48 @@
 
     previousFocus?.focus?.();
   }
+  function getFocusableElements(container) {
+  if (!container) return [];
 
+  return Array.from(
+    container.querySelectorAll(
+      'button:not([disabled]), a[href], input:not([disabled]), ' +
+      'select:not([disabled]), textarea:not([disabled]), ' +
+      '[tabindex]:not([tabindex="-1"])'
+    )
+  ).filter(element => {
+    const style = window.getComputedStyle(element);
+
+    return (
+      !element.hidden &&
+      style.display !== 'none' &&
+      style.visibility !== 'hidden'
+    );
+  });
+}
+
+function keepFocusInside(event, container) {
+  const focusable = getFocusableElements(container);
+  if (focusable.length === 0) return;
+
+  const firstElement = focusable[0];
+  const lastElement = focusable[focusable.length - 1];
+  const currentElement = document.activeElement;
+
+  if (!container.contains(currentElement)) {
+    event.preventDefault();
+    firstElement.focus();
+    return;
+  }
+
+  if (event.shiftKey && currentElement === firstElement) {
+    event.preventDefault();
+    lastElement.focus();
+  } else if (!event.shiftKey && currentElement === lastElement) {
+    event.preventDefault();
+    firstElement.focus();
+  }
+}
   document
     .getElementById('tutorial-start')
     ?.addEventListener('click', startTour);
@@ -511,18 +552,34 @@
   });
 
   document.addEventListener('keydown', event => {
-    if (event.key !== 'Escape') return;
+  const activeDialog =
+    !initialDisclaimerEl?.hidden
+      ? initialDisclaimerEl
+      : !welcomeEl?.hidden
+        ? welcomeEl
+        : !licenceModalEl?.hidden
+          ? licenceModalEl
+          : !tooltipEl?.hidden
+            ? tooltipEl
+            : null;
 
-    if (!licenceModalEl?.hidden) {
-      closeLicenceModal();
-    } else if (!initialDisclaimerEl?.hidden) {
-      disclaimerUnderstandEl?.focus();
-    } else if (!welcomeEl?.hidden) {
-      closeWelcome();
-    } else if (!tooltipEl?.hidden) {
-      endTour();
-    }
-  });
+  if (event.key === 'Tab' && activeDialog) {
+    keepFocusInside(event, activeDialog);
+    return;
+  }
+
+  if (event.key !== 'Escape') return;
+
+  if (!licenceModalEl?.hidden) {
+    closeLicenceModal();
+  } else if (!initialDisclaimerEl?.hidden) {
+    disclaimerUnderstandEl?.focus();
+  } else if (!welcomeEl?.hidden) {
+    closeWelcome();
+  } else if (!tooltipEl?.hidden) {
+    endTour();
+  }
+});
 
   if (!hasAcceptedDisclaimer()) {
     window.addEventListener(
